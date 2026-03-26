@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Void Walker</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font-family: 'Georgia', serif; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 14px; align-items: center; pointer-events: none; z-index: 10;
+  }
+  .key {
+    width: 36px; height: 36px; border: 1px solid rgba(255,200,100,0.25); border-radius: 6px;
+    background: rgba(0,0,0,0.55); color: rgba(255,200,100,0.5); font-size: 11px;
+    display: flex; align-items: center; justify-content: center;
+    letter-spacing: 0.05em; transition: all 0.1s ease;
+  }
+  .key.active {
+    border-color: rgba(255,200,100,0.85); color: rgba(255,220,140,1);
+    background: rgba(255,180,60,0.12); box-shadow: 0 0 12px rgba(255,180,60,0.35);
+  }
+  #toast {
+    position: fixed; top: 38%; left: 50%; transform: translate(-50%,-50%);
+    background: rgba(5,3,1,0.92); border: 1px solid rgba(255,200,100,0.35);
+    color: rgba(255,225,160,0.95); padding: 16px 28px; border-radius: 10px;
+    font-size: 13px; letter-spacing: 0.07em; pointer-events: none; opacity: 0;
+    transition: opacity 0.45s ease; text-align: center; max-width: 300px;
+    line-height: 1.7; z-index: 20; white-space: pre-line;
+  }
+  #toast.visible { opacity: 1; }
+  #crosshair {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    width: 5px; height: 5px; border-radius: 50%;
+    background: rgba(255,200,100,0.35); pointer-events: none; z-index: 5;
+  }
+</style>
+</head>
+<body>
+<div id="crosshair"></div>
+<div id="ui">
+  <!-- WASD cluster -->
+  <div style="display:flex;flex-direction:column;gap:5px;align-items:center">
+    <div class="key" id="key-w">W</div>
+    <div style="display:flex;gap:5px">
+      <div class="key" id="key-a">A</div>
+      <div class="key" id="key-s">S</div>
+      <div class="key" id="key-d">D</div>
+    </div>
+  </div>
+  <!-- Arrow cluster -->
+  <div style="display:flex;flex-direction:column;gap:5px;align-items:center">
+    <div class="key" id="key-up">↑</div>
+    <div style="display:flex;gap:5px">
+      <div class="key" id="key-left">←</div>
+      <div class="key" id="key-down">↓</div>
+      <div class="key" id="key-right">→</div>
+    </div>
+  </div>
+  <div class="key" id="key-e">E</div>
+</div>
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  TEXTURES
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function buildFloorTexture() {
+  const SZ = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = SZ;
+  const g = canvas.getContext('2d');
+
+  // Tile size
+  const T = 160;
+
+  // ── helpers ────────────────────────────────────────────────
+  function beginPoly(points) {
+    g.beginPath();
+    g.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i++) g.lineTo(points[i][0], points[i][1]);
+    g.closePath();
+  }
+
+  function regularPoly(cx, cy, r, sides, startAngle) {
+    const pts = [];
+    for (let i = 0; i < sides; i++) {
+      const a = startAngle + (i / sides) * Math.PI * 2;
+      pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+    }
+    return pts;
+  }
+
+  function star(cx, cy, outerR, innerR, numPoints, startAngle) {
+    const pts = [];
+    for (let i = 0; i < numPoints * 2; i++) {
+      const a = startAngle + (i / (numPoints * 2)) * Math.PI * 2;
+      const r = i % 2 === 0 ? outerR : innerR;
+      pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+    }
+    return pts;
+  }
+
+  // ── draw one tile cell ─────────────────────────────────────
+  function drawCell(cx, cy) {
+    // 1. Cream/ivory base square
+    g.fillStyle = '#f5f0dc';
+    g.fillRect(cx - T / 2, cy - T / 2, T, T);
+
+    // 2. Cobalt blue octagon
+    beginPoly(regularPoly(cx, cy, T * 0.46, 8, -Math.PI / 8));
+    g.fillStyle = '#1a5276'; g.fill();
+    g.strokeStyle = '#f39c12'; g.lineWidth = 2; g.stroke();
+
+    // 3. Crimson square (axis-aligned)
+    beginPoly(regularPoly(cx, cy, T * 0.31, 4, -Math.PI / 4));
+    g.fillStyle = '#c0392b'; g.fill();
+
+    // 4. Teal diamond square
+    beginPoly(regularPoly(cx, cy, T * 0.31, 4, 0));
+    g.fillStyle = '#0e7c7b'; g.fill();
+
+    // 5. Bright gold 8-pointed star
+    beginPoly(star(cx, cy, T * 0.23, T * 0.10, 8, -Math.PI / 2));
+    g.fillStyle = '#f39c12'; g.fill();
+    g.strokeStyle = '#fff8e1'; g.lineWidth = 1.2; g.stroke();
+
+    // 6. White centre dot
+    g.beginPath(); g.arc(cx, cy, T * 0.07, 0, Math.PI * 2);
+    g.fillStyle = '#ffffff'; g.fill();
+  }
+
+  // ── fill canvas ───────────────────────────────────────────
+  const cols = Math.ceil(SZ / T) + 2;
+  const rows = Math.ceil(SZ / T) + 2;
+  for (let r = -1; r <= rows; r++) {
+    for (let c = -1; c <= cols; c++) {
+      drawCell(c * T + T * 0.5, r * T + T * 0.5);
+    }
+  }
+
+  // ── emerald corner diamonds ───────────────────────────────
+  for (let r = -1; r <= rows + 1; r++) {
+    for (let c = -1; c <= cols + 1; c++) {
+      const cx = c * T, cy = r * T, s = T * 0.20;
+      g.beginPath();
+      g.moveTo(cx, cy - s); g.lineTo(cx + s, cy);
+      g.lineTo(cx, cy + s); g.lineTo(cx - s, cy);
+      g.closePath();
+      g.fillStyle = '#27ae60'; g.fill();
+      g.strokeStyle = '#f39c12'; g.lineWidth = 1.2; g.stroke();
+    }
+  }
+
+  // ── gold dividing lines ───────────────────────────────────
+  g.strokeStyle = 'rgba(243,156,18,0.7)';
+  g.lineWidth = 1.0;
+  for (let x = 0; x <= SZ; x += T) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, SZ); g.stroke(); }
+  for (let y = 0; y <= SZ; y += T) { g.beginPath(); g.moveTo(0, y); g.lineTo(SZ, y); g.stroke(); }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(4, 4);
+  return tex;
+}
+
+function buildWallTexture() {
+  const SZ = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = SZ;
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#060610';
+  g.fillRect(0, 0, SZ, SZ);
+  const bh = 48;
+  for (let y = 0; y < SZ; y += bh) {
+    const offset = (Math.floor(y / bh) % 2 === 0) ? 0 : 70;
+    g.strokeStyle = 'rgba(150,120,220,0.07)'; g.lineWidth = 1.6;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(SZ, y); g.stroke();
+    for (let x = offset; x < SZ; x += 140) {
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + bh); g.stroke();
+    }
+  }
+  const id = g.getImageData(0, 0, SZ, SZ);
+  for (let i = 0; i < id.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 12;
+    id.data[i]   = Math.min(255, Math.max(0, id.data[i]   + n));
+    id.data[i+1] = Math.min(255, Math.max(0, id.data[i+1] + n * 0.8));
+    id.data[i+2] = Math.min(255, Math.max(0, id.data[i+2] + n * 1.1));
+    id.data[i+3] = 255;
+  }
+  g.putImageData(id, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(5, 3);
+  return tex;
+}
+
+function buildOrbTexture() {
+  const SZ = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = SZ;
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#1a0500';
+  g.fillRect(0, 0, SZ, SZ);
+  for (let i = 0; i < 18; i++) {
+    const x1 = Math.random() * SZ, y1 = Math.random() * SZ;
+    const x2 = Math.random() * SZ, y2 = Math.random() * SZ;
+    const mx = Math.random() * SZ, my = Math.random() * SZ;
+    const gr = g.createLinearGradient(x1, y1, x2, y2);
+    gr.addColorStop(0, 'rgba(255,60,0,0)');
+    gr.addColorStop(0.5, `rgba(${210 + (Math.random() * 45) | 0},${50 + (Math.random() * 110) | 0},0,${0.3 + Math.random() * 0.5})`);
+    gr.addColorStop(1, 'rgba(200,30,0,0)');
+    g.strokeStyle = gr;
+    g.lineWidth = 0.5 + Math.random() * 2.5;
+    g.beginPath(); g.moveTo(x1, y1); g.quadraticCurveTo(mx, my, x2, y2); g.stroke();
+  }
+  for (let i = 0; i < 10; i++) {
+    const x = Math.random() * SZ, y = Math.random() * SZ, r = 8 + Math.random() * 30;
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, 'rgba(255,235,120,0.9)');
+    gr.addColorStop(0.4, 'rgba(255,120,20,0.5)');
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  }
+  return new THREE.CanvasTexture(canvas);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  SCENE SETUP
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+scene.fog = new THREE.FogExp2(0x000000, 0.030);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = false;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+
+const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 80);
+
+// ── Floor ──────────────────────────────────────────────────
+const floorTex = buildFloorTexture();
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(100, 100),
+  new THREE.MeshStandardMaterial({
+    map: floorTex,
+    color: 0xffffff,   // no tint — show true texture colours
+    roughness: 0.75,
+    metalness: 0.05,
+  })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -0.002;
+scene.add(floor);
+
+// ── Room box (walls + ceiling) ────────────────────────────
+const roomBox = new THREE.Mesh(
+  new THREE.BoxGeometry(90, 16, 90),
+  new THREE.MeshStandardMaterial({
+    map: buildWallTexture(),
+    color: 0x8877bb,
+    roughness: 0.96,
+    metalness: 0.03,
+    side: THREE.BackSide,
+  })
+);
+roomBox.position.y = 8;
+scene.add(roomBox);
+
+// ── Lights ────────────────────────────────────────────────
+//  Ambient bright enough the tile colours read throughout the room
+scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+//  Warm directional from above
+const topFill = new THREE.DirectionalLight(0xfff5e0, 0.6);
+topFill.position.set(0, 20, 0);
+scene.add(topFill);
+//  Cool blue fill to bring out tile blues
+const coolFill = new THREE.DirectionalLight(0xaaccff, 0.4);
+coolFill.position.set(0, 10, 20);
+scene.add(coolFill);
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  PLAYER ORB
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const player = new THREE.Group();
+scene.add(player);
+
+const orbTex = buildOrbTexture();
+
+// Core sphere
+const orbMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(0.22, 32, 32),
+  new THREE.MeshStandardMaterial({
+    map: orbTex,
+    emissiveMap: orbTex,
+    color: 0xfff5d0,
+    emissive: 0xff9900,
+    emissiveIntensity: 3.5,
+    roughness: 0.12,
+  })
+);
+orbMesh.position.y = 0.55;
+player.add(orbMesh);
+
+// Inner glow shell — above floor
+const midGlow = new THREE.Mesh(
+  new THREE.SphereGeometry(0.50, 24, 24),
+  new THREE.MeshStandardMaterial({
+    color: 0xff7700, emissive: 0xff5500, emissiveIntensity: 1.0,
+    transparent: true, opacity: 0.10, roughness: 1,
+    side: THREE.BackSide, depthWrite: false,
+  })
+);
+midGlow.position.y = 0.90;
+player.add(midGlow);
+
+// Outer glow shell — fully above floor (centre y=1.2, radius=1.1 → bottom at 0.1)
+const outerGlow = new THREE.Mesh(
+  new THREE.SphereGeometry(1.10, 24, 24),
+  new THREE.MeshStandardMaterial({
+    color: 0xff6600, emissive: 0xff3300, emissiveIntensity: 0.3,
+    transparent: true, opacity: 0.035, roughness: 1,
+    side: THREE.BackSide, depthWrite: false,
+  })
+);
+outerGlow.position.y = 1.20;
+player.add(outerGlow);
+
+// Orb point light
+const orbLight = new THREE.PointLight(0xffa040, 5.5, 20, 1.5);
+orbLight.position.y = 0.55;
+player.add(orbLight);
+
+// Wide soft fill
+const fillLight = new THREE.PointLight(0xff7733, 1.4, 28, 1.1);
+fillLight.position.y = 0.8;
+player.add(fillLight);
+
+// Floor bounce — key to making the Islamic tiles sparkle
+const floorBounce = new THREE.PointLight(0xffdd88, 2.8, 10, 1.8);
+floorBounce.position.set(0, 0.08, 0);
+player.add(floorBounce);
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  DUST MOTES
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const MOTE_N = 140;
+const motePos = new Float32Array(MOTE_N * 3);
+const motePhase = new Float32Array(MOTE_N);
+for (let i = 0; i < MOTE_N; i++) {
+  motePos[i*3]   = (Math.random() - 0.5) * 20;
+  motePos[i*3+1] = Math.random() * 4;
+  motePos[i*3+2] = (Math.random() - 0.5) * 20;
+  motePhase[i]   = Math.random() * Math.PI * 2;
+}
+const moteGeo = new THREE.BufferGeometry();
+moteGeo.setAttribute('position', new THREE.BufferAttribute(motePos, 3));
+const moteMesh = new THREE.Points(moteGeo, new THREE.PointsMaterial({
+  color: 0xffe8b0, size: 0.03, transparent: true, opacity: 0.28,
+  sizeAttenuation: true, depthWrite: false,
+}));
+scene.add(moteMesh);
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  FLOATERS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const FLOATER_DATA = [
+  { pos: [ 6, 1.2, -5],  geo: new THREE.OctahedronGeometry(0.25),         color: 0x88ddff, em: 0x2299cc, msg: "A crystalline shard.\nIt hums with forgotten geometry." },
+  { pos: [-7, 1.0,  4],  geo: new THREE.TetrahedronGeometry(0.28),         color: 0xffcc55, em: 0xdd8800, msg: "A golden tetrahedron.\nThe oldest shape. The first solid." },
+  { pos: [ 3, 1.5,  9],  geo: new THREE.TorusGeometry(0.22, 0.08, 16, 48), color: 0xff88aa, em: 0xcc2255, msg: "An endless ring.\nNo beginning. No end. Just the loop." },
+  { pos: [-9, 1.1, -8],  geo: new THREE.IcosahedronGeometry(0.22),         color: 0xaaffcc, em: 0x22aa55, msg: "Pale icosahedron.\nTwenty faces of quiet certainty." },
+  { pos: [10, 0.9,  3],  geo: new THREE.DodecahedronGeometry(0.22),        color: 0xcc99ff, em: 0x7733cc, msg: "The dodecahedron.\nThe cosmos folded into twelve." },
+  { pos: [-4, 1.3,-12],  geo: new THREE.SphereGeometry(0.18, 16, 16),      color: 0xffffff, em: 0xaaaaff, msg: "A white sphere.\nSomething's echo. A remnant." },
+  { pos: [13, 1.0, -6],  geo: new THREE.BoxGeometry(0.25, 0.25, 0.25),     color: 0xffeeaa, em: 0xcc9900, msg: "A perfect cube.\nSix faces of rigid truth." },
+  { pos: [-13,1.2,  7],  geo: new THREE.TorusKnotGeometry(0.14,0.05,64,8), color: 0xff99cc, em: 0xcc3388, msg: "An impossible knot.\nIt shouldn't exist — and yet." },
+];
+
+const floaters = FLOATER_DATA.map(fd => {
+  const mesh = new THREE.Mesh(fd.geo, new THREE.MeshStandardMaterial({
+    color: fd.color, emissive: fd.em, emissiveIntensity: 1.4,
+    roughness: 0.15, metalness: 0.6,
+  }));
+  mesh.position.set(...fd.pos);
+  scene.add(mesh);
+
+  const light = new THREE.PointLight(fd.color, 0.8, 4.5, 2);
+  light.position.copy(mesh.position);
+  scene.add(light);
+
+  return { mesh, light, message: fd.msg, baseY: fd.pos[1], phase: Math.random() * Math.PI * 2, rotSpeed: (Math.random() - 0.5) * 0.02 + 0.014 };
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  INPUT
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const keys = {};
+const KEY_UI = {
+  KeyW:'key-w', KeyA:'key-a', KeyS:'key-s', KeyD:'key-d',
+  ArrowUp:'key-up', ArrowLeft:'key-left', ArrowDown:'key-down', ArrowRight:'key-right',
+  KeyE:'key-e',
+};
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  document.getElementById(KEY_UI[e.code])?.classList.add('active');
+});
+document.addEventListener('keyup', e => {
+  keys[e.code] = false;
+  document.getElementById(KEY_UI[e.code])?.classList.remove('active');
+});
+
+let yaw = 0, pointerLocked = false;
+renderer.domElement.addEventListener('click', () => renderer.domElement.requestPointerLock());
+document.addEventListener('pointerlockchange', () => {
+  pointerLocked = document.pointerLockElement === renderer.domElement;
+});
+document.addEventListener('mousemove', e => {
+  if (pointerLocked) yaw -= e.movementX * 0.002;
+});
+let touchStartX = 0;
+renderer.domElement.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; });
+renderer.domElement.addEventListener('touchmove', e => {
+  yaw -= (e.touches[0].clientX - touchStartX) * 0.003;
+  touchStartX = e.touches[0].clientX;
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  TOAST
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('visible'), 3800);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  PARTICLE TRAIL
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const MAX_P = 90;
+const pPos  = new Float32Array(MAX_P * 3);
+const pBuf  = new THREE.BufferGeometry();
+pBuf.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+scene.add(new THREE.Points(pBuf, new THREE.PointsMaterial({
+  color: 0xff9933, size: 0.09, transparent: true, opacity: 0.40,
+  sizeAttenuation: true, depthWrite: false,
+})));
+const pData = Array.from({ length: MAX_P }, () => ({ x: 0, y: 0, z: 0, life: 0 }));
+let pIdx = 0, spawnAcc = 0;
+
+function spawnParticle(x, z) {
+  const p = pData[pIdx++ % MAX_P];
+  p.x = x + (Math.random() - 0.5) * 0.3;
+  p.y = 0.05 + Math.random() * 0.18;
+  p.z = z + (Math.random() - 0.5) * 0.3;
+  p.life = 1;
+}
+function tickParticles(dt) {
+  for (let i = 0; i < MAX_P; i++) {
+    const p = pData[i];
+    if (p.life > 0) { p.life -= dt * 0.72; p.y += dt * 0.07; }
+    pPos[i*3]   = p.life > 0 ? p.x : 9999;
+    pPos[i*3+1] = p.y;
+    pPos[i*3+2] = p.z;
+  }
+  pBuf.attributes.position.needsUpdate = true;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  LOOP — pre-allocated vectors
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const clock      = new THREE.Clock();
+const _fwd       = new THREE.Vector3();
+const _rgt       = new THREE.Vector3();
+const _camTarget = new THREE.Vector3();
+const SPEED = 4.2, BOUND = 44;
+let eWasDown = false, interactCD = 0;
+const nearest = { ref: null, dist: Infinity };
+
+setTimeout(() => showToast("Click to look around · WASD to move · E to interact"), 900);
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t  = clock.elapsedTime;
+
+  // Movement — forward is INTO the screen (positive Z in Three.js default yaw=0)
+  _fwd.set( Math.sin(yaw), 0,  Math.cos(yaw));
+  _rgt.set( Math.cos(yaw), 0, -Math.sin(yaw));
+  let moving = false;
+
+  if (keys['KeyW'] || keys['ArrowUp'])    { player.position.addScaledVector(_fwd,  SPEED * dt); moving = true; }
+  if (keys['KeyS'] || keys['ArrowDown'])  { player.position.addScaledVector(_fwd, -SPEED * dt); moving = true; }
+  if (keys['KeyD'] || keys['ArrowRight']) { player.position.addScaledVector(_rgt,  SPEED * dt); moving = true; }
+  if (keys['KeyA'] || keys['ArrowLeft'])  { player.position.addScaledVector(_rgt, -SPEED * dt); moving = true; }
+
+  player.position.x = Math.max(-BOUND, Math.min(BOUND, player.position.x));
+  player.position.z = Math.max(-BOUND, Math.min(BOUND, player.position.z));
+  player.position.y = 0;
+
+  // Orb pulse (lighting only — no scale on shells to avoid floor clip)
+  const pulse = 1 + Math.sin(t * 2.7) * 0.06;
+  orbMesh.scale.setScalar(pulse);
+  orbLight.intensity  = 5.5 + Math.sin(t * 2.4) * 0.6;
+  fillLight.intensity = 1.4 + Math.sin(t * 1.8 + 1) * 0.2;
+
+  // Dust motes drift around player
+  for (let i = 0; i < MOTE_N; i++) {
+    motePhase[i] += dt * 0.15;
+    motePos[i*3]   = player.position.x + Math.sin(motePhase[i] * 1.1 + i * 0.7) * 10;
+    motePos[i*3+1] = 0.25 + Math.abs(Math.sin(motePhase[i] * 0.6 + i * 0.4)) * 3.5;
+    motePos[i*3+2] = player.position.z + Math.cos(motePhase[i] * 0.9 + i * 0.3) * 10;
+  }
+  moteGeo.attributes.position.needsUpdate = true;
+
+  // Particle trail
+  if (moving) {
+    spawnAcc += dt;
+    if (spawnAcc > 0.055) { spawnParticle(player.position.x, player.position.z); spawnAcc = 0; }
+  }
+  tickParticles(dt);
+
+  // Floaters
+  nearest.ref = null; nearest.dist = Infinity;
+  floaters.forEach(f => {
+    f.phase += dt;
+    f.mesh.position.y = f.baseY + Math.sin(f.phase * 1.3) * 0.14;
+    f.mesh.rotation.x += f.rotSpeed;
+    f.mesh.rotation.y += f.rotSpeed * 1.4;
+    f.light.position.copy(f.mesh.position);
+
+    const dx = player.position.x - f.mesh.position.x;
+    const dz = player.position.z - f.mesh.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const prox = Math.max(0, 1 - dist / 5);
+    f.mesh.material.emissiveIntensity = 1.4 + prox * 3.2;
+    f.light.intensity = 0.8 + prox * 2.2;
+
+    if (dist < nearest.dist) { nearest.dist = dist; if (dist < 2.8) nearest.ref = f; }
+  });
+
+  // Interact
+  const eDown = keys['KeyE'];
+  if (eDown && !eWasDown && nearest.ref && interactCD <= 0) {
+    const f = nearest.ref;
+    showToast(f.message);
+    interactCD = 1.0;
+    let b = 0;
+    const burst = () => {
+      b += 0.04;
+      f.mesh.scale.setScalar(1 + Math.sin(b * Math.PI) * 0.7);
+      if (b < 1) requestAnimationFrame(burst); else f.mesh.scale.setScalar(1);
+    };
+    burst();
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
+      const p = pData[pIdx++ % MAX_P];
+      p.x = f.mesh.position.x + Math.cos(a) * 0.6;
+      p.y = f.mesh.position.y;
+      p.z = f.mesh.position.z + Math.sin(a) * 0.6;
+      p.life = 1;
+    }
+  }
+  eWasDown = eDown;
+  if (interactCD > 0) interactCD -= dt;
+  document.getElementById('key-e').classList.toggle('active', !!nearest.ref);
+
+  // Camera follows player from behind
+  const camX = player.position.x - Math.sin(yaw) * 4.6;
+  const camZ = player.position.z - Math.cos(yaw) * 4.6;
+  camera.position.lerp(_camTarget.set(camX, player.position.y + 3.1, camZ), 0.1);
+  camera.lookAt(player.position.x, player.position.y + 0.75, player.position.z);
+
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+animate();
+</script>
+</body>
+</html>
