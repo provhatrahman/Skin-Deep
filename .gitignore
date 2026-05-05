@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Dev artefacts (these live on the dev branch, not main)
+_img_dataurl.txt
+_img2_dataurl.txt
+image.png
+image2.png
+extract_textures.py
+compress_textures.py
+plan.md
