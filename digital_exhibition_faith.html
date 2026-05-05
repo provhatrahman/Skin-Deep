@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Void Walker</title>
+<title>Digital Exhibition Faith</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #000; overflow: hidden; font-family: 'Georgia', serif; }
@@ -593,15 +593,15 @@ _fShadowCtx.fillRect(0,0,64,64);
 const _floaterShadowTex = new THREE.CanvasTexture(_fShadowCanvas);
 
 const floaterData = [
-  { pos:[  0,1.1,  5], geo:new THREE.OctahedronGeometry(0.32),         color:0xffcc44, em:0xff8800, tex:'rune',   msg:"Something stirs here.\nThis was always meant\nfor you to find." },
-  { pos:[-17,1.2,-17], geo:new THREE.OctahedronGeometry(0.25),         color:0x88ddff, em:0x2299cc, tex:'crystal', msg:"A crystalline shard.\nIt hums with forgotten geometry." },
-  { pos:[  0,1.0,-18], geo:new THREE.TetrahedronGeometry(0.28),         color:0xffcc55, em:0xdd8800, tex:'circuit', msg:"A golden tetrahedron.\nThe oldest shape. The first solid." },
-  { pos:[ 17,1.5,-17], geo:new THREE.TorusGeometry(0.22,0.08,16,48),    color:0xff88aa, em:0xcc2255, tex:'marble',  msg:"An endless ring.\nNo beginning. No end. Just the loop." },
-  { pos:[ 18,1.1,  0], geo:new THREE.IcosahedronGeometry(0.22),         color:0xaaffcc, em:0x22aa55, tex:'cells',   msg:"Pale icosahedron.\nTwenty faces of quiet certainty." },
-  { pos:[ 17,0.9, 17], geo:new THREE.DodecahedronGeometry(0.22),        color:0xcc99ff, em:0x7733cc, tex:'cosmos',  msg:"The dodecahedron.\nThe cosmos folded into twelve." },
-  { pos:[  0,1.3, 18], geo:new THREE.SphereGeometry(0.18,16,16),        color:0xffffff, em:0xaaaaff, tex:'static',  msg:"A white sphere.\nSomething's echo. A remnant." },
-  { pos:[-17,1.0, 17], geo:new THREE.BoxGeometry(0.25,0.25,0.25),       color:0xffeeaa, em:0xcc9900, tex:'rune',    msg:"A perfect cube.\nSix faces of rigid truth." },
-  { pos:[-18,1.2,  0], geo:new THREE.TorusKnotGeometry(0.14,0.05,64,8), color:0xff99cc, em:0xcc3388, tex:'weave',   msg:"An impossible knot.\nIt shouldn't exist — and yet." },
+  { pos:[  0,1.1,  5], geo:new THREE.OctahedronGeometry(0.32),         color:0xffcc44, em:0xff8800, tex:'rune',   msg:"[ROOM OPENED]" },
+  { pos:[-17,1.2,-17], geo:new THREE.OctahedronGeometry(0.25),         color:0x88ddff, em:0x2299cc, tex:'crystal', msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[  0,1.0,-18], geo:new THREE.TetrahedronGeometry(0.28),         color:0xffcc55, em:0xdd8800, tex:'circuit', msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[ 17,1.5,-17], geo:new THREE.TorusGeometry(0.22,0.08,16,48),    color:0xff88aa, em:0xcc2255, tex:'marble',  msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[ 18,1.1,  0], geo:new THREE.IcosahedronGeometry(0.22),         color:0xaaffcc, em:0x22aa55, tex:'cells',   msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[ 17,0.9, 17], geo:new THREE.DodecahedronGeometry(0.22),        color:0xcc99ff, em:0x7733cc, tex:'cosmos',  msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[  0,1.3, 18], geo:new THREE.SphereGeometry(0.18,16,16),        color:0xffffff, em:0xaaaaff, tex:'static',  msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[-17,1.0, 17], geo:new THREE.BoxGeometry(0.25,0.25,0.25),       color:0xffeeaa, em:0xcc9900, tex:'rune',    msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[-18,1.2,  0], geo:new THREE.TorusKnotGeometry(0.14,0.05,64,8), color:0xff99cc, em:0xcc3388, tex:'weave',   msg:"[EXHIBIT PIECE TRIGGERED]" },
 ];
 
 const floaters = [];

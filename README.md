@@ -1,8 +1,8 @@
-# Void Walker
+# Digital Exhibition Faith
 
 A browser-based 3D interactive experience for [Skin Deep magazine](https://skindeepmag.com), built with [Three.js](https://threejs.org/).
 
-The visitor navigates a dark infinite room as a glowing orb, discovering floating geometric objects. Approaching and interacting with each object reveals a short text fragment. Works on desktop and mobile.
+The visitor navigates a dimly lit liminal space, acting as a digital art exhibition, as a glowing orb, discovering floating geometric objects. Approaching and interacting with each object will trigger individual exhibition pieces
 
 ---
 
@@ -25,12 +25,12 @@ The experience is intended to be **embedded as an `<iframe>`** on the Skin Deep 
 ## Repository structure
 
 ```
-void_walker.html   — The entire application (self-contained)
+digital_exhibition_faith.html   — The entire application (self-contained)
 orb_tex.png        — Player orb texture
 tile.png           — Floor and wall tile texture
 ```
 
-All game logic, UI, and shaders live inside `void_walker.html`. There is no build process, bundler, or package manager.
+All game logic, UI, and shaders live inside `digital_exhibition_faith.html`. There is no build process, bundler, or package manager.
 
 ---
 
@@ -40,7 +40,7 @@ All game logic, UI, and shaders live inside `void_walker.html`. There is no buil
    ```
    python -m http.server 8080
    ```
-2. Open `http://localhost:8080/void_walker.html` in a browser.
+2. Open `http://localhost:8080/digital_exhibition_faith.html` in a browser.
 3. Press `Ctrl+C` to stop.
 
 > The page must be served over HTTP (not opened as a `file://` URL) because textures are loaded as separate files.
@@ -63,7 +63,3 @@ All game logic, UI, and shaders live inside `void_walker.html`. There is no buil
 | Tap interact button | Interact |
 
 ---
-
-## Development
-
-Development files (texture source data, compression scripts, performance notes) are preserved on the `dev` branch.
