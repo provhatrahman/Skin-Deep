@@ -2,7 +2,7 @@
 
 A browser-based 3D interactive experience for [Skin Deep magazine](https://skindeepmag.com), built with [Three.js](https://threejs.org/).
 
-The visitor navigates a dark infinite room as a glowing orb, discovering floating geometric objects. Approaching and interacting with each object reveals a short text fragment. Works on desktop and mobile.
+The visitor navigates a dimly lit liminal space, acting as a digital art exhibition, as a glowing orb, discovering floating geometric objects. Approaching and interacting with each object will trigger individual exhibition pieces
 
 ---
 
