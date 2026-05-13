@@ -20,3 +20,6 @@ image2.png
 extract_textures.py
 compress_textures.py
 plan.md
+
+# Copilot instructions (local only, not branch-specific)
+.github/copilot-instructions.md
