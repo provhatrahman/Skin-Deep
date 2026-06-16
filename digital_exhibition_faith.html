@@ -151,6 +151,38 @@
     50%      { transform: translate(-50%, -50%) scale(1.1); }
   }
 
+  /* ── FOCUS ESCAPE HINT ── */
+  #focus-escape-hint {
+    position: fixed; bottom: 28px; left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none; z-index: 25;
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 16px 7px 12px; border-radius: 24px;
+    background: rgba(4,2,0,0.72);
+    border: 1px solid rgba(255,200,100,0.2);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,200,100,0.07);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    opacity: 0; transition: opacity 0.5s ease;
+    white-space: nowrap;
+  }
+  #focus-escape-hint.visible { opacity: 1; }
+  #focus-escape-hint.dim { opacity: 0.22; transition: opacity 1.8s ease; }
+  .feh-key {
+    font-family: Georgia, serif; font-size: 9px; letter-spacing: 0.08em;
+    color: rgba(255,220,140,0.9); padding: 2px 7px;
+    border: 1px solid rgba(255,200,100,0.45); border-radius: 4px;
+    background: rgba(0,0,0,0.5);
+    box-shadow: 0 0 8px rgba(255,180,60,0.3);
+    text-transform: uppercase;
+  }
+  .feh-label {
+    font-family: Georgia, serif; font-size: 10px; letter-spacing: 0.12em;
+    color: rgba(255,210,135,0.7); text-transform: uppercase;
+  }
+  @media (pointer: coarse) {
+    #focus-escape-hint { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  }
+
   #tut-overlay {
     position: fixed; inset: 0; z-index: 30; pointer-events: none;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -365,6 +397,7 @@
   <div class="ipr-pip"></div>
 </div>
 <div id="aim-reticle"></div>
+<div id="focus-escape-hint"></div>
 <div id="tut-guide-dot"><div class="tut-gdot-ring"></div><div class="tut-gdot-ball"></div></div>
 <div id="tut-overlay">
   <div id="tut-card">
@@ -1588,6 +1621,7 @@ function _startExhibitFocus(idx) {
 
 function _startExhibitUnfocus() {
   if (exhibitFocusPhase !== 'focused') return;
+  _hideFocusEscapeHint();
   const p = exhibitPlanes[exhibitFocusIdx];
   _syncCamera();
   _refreshExhibitFocusTarget(p.mesh);
@@ -1599,6 +1633,7 @@ function _startExhibitUnfocus() {
 }
 
 function _resetExhibitFocus() {
+  _hideFocusEscapeHint();
   exhibitFocusIdx = -1;
   exhibitFocusPhase = null;
   exhibitFocusT = 0;
@@ -1700,7 +1735,24 @@ const _elToast       = document.getElementById('toast');
 const _elIprLabel    = document.getElementById('ipr-label');
 const _elIprIcon     = document.getElementById('ipr-icon');
 const _elAimReticle  = document.getElementById('aim-reticle');
-const _elMmWrap      = document.getElementById('minimap-wrap');
+const _elMmWrap           = document.getElementById('minimap-wrap');
+const _elFocusEscapeHint  = document.getElementById('focus-escape-hint');
+let   _focusEscapeTimer   = null;
+
+function _showFocusEscapeHint() {
+  _elFocusEscapeHint.innerHTML = isMobile
+    ? `<span class="feh-label">tap to return</span>`
+    : `<span class="feh-key">spc</span><span class="feh-label">back</span>`;
+  _elFocusEscapeHint.classList.remove('dim');
+  _elFocusEscapeHint.classList.add('visible');
+  clearTimeout(_focusEscapeTimer);
+  _focusEscapeTimer = setTimeout(() => _elFocusEscapeHint.classList.add('dim'), 2800);
+}
+
+function _hideFocusEscapeHint() {
+  clearTimeout(_focusEscapeTimer);
+  _elFocusEscapeHint.classList.remove('visible', 'dim');
+}
 
 function animate() {
   requestAnimationFrame(animate);
@@ -1931,13 +1983,7 @@ function animate() {
   } else if (exhibitFocusPhase === 'focused') {
     _elAimReticle.classList.remove('visible');
     _elAimReticle.classList.remove('locked');
-    _elPrompt.style.left = '50%';
-    _elPrompt.style.top  = '62%';
-    _elIprLabel.textContent = isMobile ? 'tap to return' : 'back';
-    _elIprIcon.innerHTML = isMobile
-      ? `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="16" height="16"><path d="M9 14l-4-4 4-4"/><path d="M5 10h12"/></svg>`
-      : `<span style="font-family:Georgia,serif;font-size:9px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
-    _elPrompt.classList.add('visible');
+    _elPrompt.classList.remove('visible');
   } else {
     _elAimReticle.classList.remove('visible');
     _elAimReticle.classList.remove('locked');
@@ -2010,7 +2056,7 @@ function animate() {
         p.mesh.material.opacity = Math.max(0, 1 - s * 1.2);
         p.mesh.visible = p.mesh.material.opacity > 0.04;
       });
-      if (exhibitFocusT >= 1) exhibitFocusPhase = 'focused';
+      if (exhibitFocusT >= 1) { exhibitFocusPhase = 'focused'; _showFocusEscapeHint(); }
     } else if (exhibitFocusPhase === 'focused') {
       const fp = exhibitPlanes[exhibitFocusIdx];
       _refreshExhibitFocusTarget(fp.mesh);
