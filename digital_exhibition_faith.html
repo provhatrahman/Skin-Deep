@@ -300,6 +300,7 @@
     font-family: Georgia, serif; font-size: 9px; letter-spacing: 0.18em;
     text-transform: uppercase; color: rgba(255,200,100,0.35);
   }
+
 </style>
 </head>
 <body>
@@ -430,82 +431,157 @@ function makeFloaterTex(type) {
   return new THREE.CanvasTexture(cv);
 }
 
-function makeExhibitTex_A() {
-  const S = 512, cv = document.createElement('canvas');
-  cv.width = cv.height = S;
+function makeExhibitFrameTex() {
+  const W = 512, H = 384;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#060810'; ctx.fillRect(0, 0, S, S);
-  const g = ctx.createLinearGradient(0, 0, 0, S);
-  g.addColorStop(0,   'rgba(20,80,100,0.9)');
-  g.addColorStop(0.4, 'rgba(10,40,60,0.6)');
-  g.addColorStop(1,   'rgba(0,0,0,0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
-  const bloom = ctx.createRadialGradient(S*0.6, S*0.35, 0, S*0.6, S*0.35, S*0.32);
-  bloom.addColorStop(0,   'rgba(100,220,240,0.22)');
-  bloom.addColorStop(0.5, 'rgba(40,140,170,0.08)');
-  bloom.addColorStop(1,   'rgba(0,0,0,0)');
-  ctx.fillStyle = bloom; ctx.fillRect(0, 0, S, S);
-  ctx.fillStyle = 'rgba(0,0,0,0.18)';
-  for (let y = 0; y < S; y += 4) ctx.fillRect(0, y, S, 1);
-  ctx.strokeStyle = 'rgba(100,220,240,0.35)'; ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.moveTo(0, S*0.38); ctx.lineTo(S, S*0.38); ctx.stroke();
+  const FW = 16; // frame border thickness in pixels (matches FRAME_BORDER world units)
+
+  // Dark warm backing for the frame border region
+  ctx.fillStyle = 'rgba(8,4,1,0.82)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Outer edge — faint amber perimeter line
+  ctx.shadowColor = 'rgba(255,170,50,0.5)';
+  ctx.shadowBlur = 8;
+  ctx.strokeStyle = 'rgba(255,180,60,0.32)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(1.5, 1.5, W-3, H-3);
+
+  // Inner glow line — bright gold at image boundary
+  ctx.shadowColor = 'rgba(255,195,80,0.9)';
+  ctx.shadowBlur = 14;
+  ctx.strokeStyle = 'rgba(255,215,110,0.75)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(FW - 0.75, FW - 0.75, W - FW*2 + 1.5, H - FW*2 + 1.5);
+
+  // Corner L-bracket ornaments — matches ipr-icon / orb glow palette
+  const CL = 24;
+  ctx.shadowColor = 'rgba(255,230,130,1)';
+  ctx.shadowBlur = 16;
+  ctx.strokeStyle = 'rgba(255,240,160,0.92)';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  // TL
+  ctx.beginPath(); ctx.moveTo(FW+CL, FW); ctx.lineTo(FW, FW); ctx.lineTo(FW, FW+CL); ctx.stroke();
+  // TR
+  ctx.beginPath(); ctx.moveTo(W-FW-CL, FW); ctx.lineTo(W-FW, FW); ctx.lineTo(W-FW, FW+CL); ctx.stroke();
+  // BR
+  ctx.beginPath(); ctx.moveTo(W-FW, H-FW-CL); ctx.lineTo(W-FW, H-FW); ctx.lineTo(W-FW-CL, H-FW); ctx.stroke();
+  // BL
+  ctx.beginPath(); ctx.moveTo(FW+CL, H-FW); ctx.lineTo(FW, H-FW); ctx.lineTo(FW, H-FW-CL); ctx.stroke();
+
+  // Punch transparent center so the photo shows through
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = 'rgba(0,0,0,1)';
+  ctx.fillRect(FW, FW, W - FW*2, H - FW*2);
+  ctx.globalCompositeOperation = 'source-over';
+
   return new THREE.CanvasTexture(cv);
 }
 
-function makeExhibitTex_B() {
-  const S = 512, cv = document.createElement('canvas');
-  cv.width = cv.height = S;
+function makePhotographerCardTex() {
+  const W = 512, H = 384;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#0a0806'; ctx.fillRect(0, 0, S, S);
-  const vig = ctx.createRadialGradient(S*0.48, S*0.44, 0, S*0.48, S*0.44, S*0.52);
-  vig.addColorStop(0,   'rgba(255,240,210,0.55)');
-  vig.addColorStop(0.5, 'rgba(200,175,140,0.18)');
-  vig.addColorStop(1,   'rgba(0,0,0,0)');
-  ctx.fillStyle = vig; ctx.fillRect(0, 0, S, S);
-  const id = ctx.createImageData(S, S);
-  for (let i = 0; i < S*S; i++) {
-    const v = Math.random() < 0.12 ? (Math.random() * 180 + 40) : (Math.random() * 18);
-    id.data[i*4]   = v * 1.1;
-    id.data[i*4+1] = v;
-    id.data[i*4+2] = v * 0.85;
-    id.data[i*4+3] = Math.random() * 120 + 60;
-  }
-  ctx.putImageData(id, 0, 0);
-  for (let b = 0; b < 3; b++) {
-    const by = S * (0.28 + b * 0.18 + Math.random() * 0.04);
-    ctx.fillStyle = `rgba(255,248,235,${0.06 + Math.random() * 0.08})`;
-    ctx.fillRect(0, by, S, 1 + Math.random() * 2.5);
-  }
+
+  // Background
+  ctx.fillStyle = 'rgb(4,2,1)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Vignette
+  const vg = ctx.createRadialGradient(W/2, H/2, 40, W/2, H/2, W * 0.7);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Outer border
+  const BM = 14;
+  ctx.strokeStyle = 'rgba(255,200,100,0.32)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(BM, BM, W - BM*2, H - BM*2);
+
+  // Inner ghost border
+  ctx.strokeStyle = 'rgba(255,200,100,0.1)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(BM+4, BM+4, W-BM*2-8, H-BM*2-8);
+
+  // Corner accents
+  const CL = 28, F = BM;
+  ctx.shadowColor = 'rgba(255,220,120,1)';
+  ctx.shadowBlur = 10;
+  ctx.strokeStyle = 'rgba(255,240,160,0.9)';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(F+CL,F);   ctx.lineTo(F,F);   ctx.lineTo(F,F+CL);   ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W-F-CL,F); ctx.lineTo(W-F,F); ctx.lineTo(W-F,F+CL); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W-F,H-F-CL); ctx.lineTo(W-F,H-F); ctx.lineTo(W-F-CL,H-F); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(F+CL,H-F); ctx.lineTo(F,H-F); ctx.lineTo(F,H-F-CL); ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  const cx = W / 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+
+  // "PHOTOGRAPHER" label — spaced manually for canvas compat
+  ctx.fillStyle = 'rgba(255,200,100,0.42)';
+  ctx.font = '400 11px Georgia, serif';
+  ctx.fillText('P H O T O G R A P H E R', cx, 74);
+
+  // Name
+  ctx.fillStyle = 'rgba(255,238,175,0.98)';
+  ctx.font = '400 30px Georgia, serif';
+  ctx.shadowColor = 'rgba(255,200,80,0.18)';
+  ctx.shadowBlur = 14;
+  ctx.fillText('Mohammed Alim', cx, 126);
+  ctx.shadowBlur = 0;
+
+  // Name divider
+  ctx.strokeStyle = 'rgba(255,200,100,0.22)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - 130, 146); ctx.lineTo(cx + 130, 146);
+  ctx.stroke();
+
+  // Bio
+  ctx.fillStyle = 'rgba(255,210,135,0.68)';
+  ctx.font = '400 15px Georgia, serif';
+  ctx.fillText('Documents Islamic architecture', cx, 184);
+  ctx.fillText('& the lived colour of faith', cx, 207);
+  ctx.fillText('across Southeast Asia.', cx, 230);
+
+  // Awards
+  ctx.fillStyle = 'rgba(255,200,100,0.52)';
+  ctx.font = '400 12px Georgia, serif';
+  ctx.fillText('★  reFocus 2025 Gold  ·  Unsplash 2025', cx, 278);
+
+  // Award divider
+  ctx.strokeStyle = 'rgba(255,200,100,0.14)';
+  ctx.beginPath();
+  ctx.moveTo(cx - 90, 298); ctx.lineTo(cx + 90, 298);
+  ctx.stroke();
+
+  // Handle
+  ctx.fillStyle = 'rgba(255,200,100,0.38)';
+  ctx.font = '400 12px Georgia, serif';
+  ctx.fillText('@apyfz', cx, 330);
+
   return new THREE.CanvasTexture(cv);
 }
 
-function makeExhibitTex_C() {
-  const S = 512, cv = document.createElement('canvas');
-  cv.width = cv.height = S;
-  const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#0d0b09'; ctx.fillRect(0, 0, S, S);
-  const panels = [
-    { x: S*0.18, y: S*0.22, w: S*0.28, h: S*0.38, a: 0.07 },
-    { x: S*0.62, y: S*0.45, w: S*0.20, h: S*0.30, a: 0.05 },
-  ];
-  panels.forEach(p => {
-    const pg = ctx.createRadialGradient(p.x+p.w/2, p.y+p.h/2, 0, p.x+p.w/2, p.y+p.h/2, Math.max(p.w,p.h)*0.6);
-    pg.addColorStop(0, `rgba(255,250,235,${p.a})`);
-    pg.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = pg; ctx.fillRect(p.x, p.y, p.w, p.h);
-    ctx.strokeStyle = `rgba(220,210,190,${p.a * 0.8})`; ctx.lineWidth = 0.6;
-    ctx.strokeRect(p.x, p.y, p.w, p.h);
-  });
-  ctx.strokeStyle = 'rgba(200,190,170,0.055)'; ctx.lineWidth = 0.5;
-  for (let x = 0; x <= S; x += 32) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, S); ctx.stroke(); }
-  for (let y = 0; y <= S; y += 32) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(S, y); ctx.stroke(); }
-  ctx.fillStyle = 'rgba(220,210,180,0.4)';
-  for (let x = 0; x <= S; x += 96)
-    for (let y = 0; y <= S; y += 96) {
-      ctx.beginPath(); ctx.arc(x, y, 1.2, 0, Math.PI*2); ctx.fill();
-    }
-  return new THREE.CanvasTexture(cv);
-}
+const _texLoader = new THREE.TextureLoader();
+const exhibitTextures = [
+  'images/alim-ZLwk24PZFO8-unsplash.jpg',
+  'images/alim-4heeT54_4U0-unsplash.jpg',
+  'images/alim-xO4ul401gSQ-unsplash.jpg',
+  'images/alim-jiW2VlctJk0-unsplash.jpg',
+  'images/alim-V1Ii_Nq1k8o-unsplash.jpg',
+].map(path => _texLoader.load(path));
+const _exhibitFrameTex    = makeExhibitFrameTex();
+const _photographerCardTex = makePhotographerCardTex();
 
 // ══════════════════════════════════════════
 //  SCENE
@@ -671,14 +747,14 @@ const _floaterShadowTex = new THREE.CanvasTexture(_fShadowCanvas);
 
 const floaterData = [
   { pos:[   0,1.1,    4], geo:new THREE.OctahedronGeometry(0.32),         color:0xffcc44, em:0xff8800, tex:'rune',   msg:"[ROOM OPENED]" },
-  { pos:[ -13,1.2,  -13], geo:new THREE.OctahedronGeometry(0.25),         color:0x88ddff, em:0x2299cc, tex:'crystal', msg:"[EXHIBIT PIECE TRIGGERED]" },
-  { pos:[   0,1.0,  -14], geo:new THREE.TetrahedronGeometry(0.28),         color:0xffcc55, em:0xdd8800, tex:'circuit', msg:"[EXHIBIT PIECE TRIGGERED]" },
-  { pos:[  13,1.5,  -13], geo:new THREE.TorusGeometry(0.22,0.08,16,48),    color:0xff88aa, em:0xcc2255, tex:'marble',  msg:"[EXHIBIT PIECE TRIGGERED]" },
-  { pos:[  14,1.1,    0], geo:new THREE.IcosahedronGeometry(0.22),         color:0xaaffcc, em:0x22aa55, tex:'cells',   msg:"[EXHIBIT PIECE TRIGGERED]" },
-  { pos:[  13,0.9,   13], geo:new THREE.DodecahedronGeometry(0.22),        color:0xcc99ff, em:0x7733cc, tex:'cosmos',  msg:"[EXHIBIT PIECE TRIGGERED]" },
-  { pos:[   0,1.3,   14], geo:new THREE.SphereGeometry(0.18,16,16),        color:0xffffff, em:0xaaaaff, tex:'static',  msg:"[EXHIBIT PIECE TRIGGERED]" },
-  { pos:[ -13,1.0,   13], geo:new THREE.BoxGeometry(0.25,0.25,0.25),       color:0xffeeaa, em:0xcc9900, tex:'rune',    msg:"[EXHIBIT PIECE TRIGGERED]" },
-  { pos:[ -14,1.2,    0], geo:new THREE.TorusKnotGeometry(0.14,0.05,64,8), color:0xff99cc, em:0xcc3388, tex:'weave',   msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[ -11,1.2,  -11], geo:new THREE.OctahedronGeometry(0.25),         color:0x88ddff, em:0x2299cc, tex:'crystal', msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[   0,1.0,  -12], geo:new THREE.TetrahedronGeometry(0.28),         color:0xffcc55, em:0xdd8800, tex:'circuit', msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[  11,1.5,  -11], geo:new THREE.TorusGeometry(0.22,0.08,16,48),    color:0xff88aa, em:0xcc2255, tex:'marble',  msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[  12,1.1,    0], geo:new THREE.IcosahedronGeometry(0.22),         color:0xaaffcc, em:0x22aa55, tex:'cells',   msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[  11,0.9,   11], geo:new THREE.DodecahedronGeometry(0.22),        color:0xcc99ff, em:0x7733cc, tex:'cosmos',  msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[   0,1.3,   12], geo:new THREE.SphereGeometry(0.18,16,16),        color:0xffffff, em:0xaaaaff, tex:'static',  msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[ -11,1.0,   11], geo:new THREE.BoxGeometry(0.25,0.25,0.25),       color:0xffeeaa, em:0xcc9900, tex:'rune',    msg:"[EXHIBIT PIECE TRIGGERED]" },
+  { pos:[ -12,1.2,    0], geo:new THREE.TorusKnotGeometry(0.14,0.05,64,8), color:0xff99cc, em:0xcc3388, tex:'weave',   msg:"[EXHIBIT PIECE TRIGGERED]" },
 ];
 
 const floaters = [];
@@ -803,11 +879,12 @@ let exhibitCZ     = 0;       // orbit centre Z
 
 const EXHIBIT_OPEN_DUR  = 0.55;
 const EXHIBIT_CLOSE_DUR = 0.35;
-const EXHIBIT_W         = 2.8;
-const EXHIBIT_H         = 3.8;
-const EXHIBIT_STAGGER   = [0.0, 0.12, 0.24];
+const EXHIBIT_W         = 3.6;   // landscape 4:3
+const EXHIBIT_H         = 2.7;
+const FRAME_BORDER      = 0.12;  // world-unit overhang of frame plane beyond image edges
+const EXHIBIT_STAGGER   = [0.0, 0.08, 0.16, 0.24, 0.32, 0.40];
 const EXHIBIT_ORBIT_R   = 4.5;   // radius of the orbit circle
-const EXHIBIT_ORBIT_SPD = 0.22;  // radians/second (one lap ≈ 28 s)
+const EXHIBIT_ORBIT_SPD = 0.04;  // radians/second (one lap ≈ 157 s)
 
 // ══════════════════════════════════════════
 //  INPUT
@@ -838,7 +915,7 @@ renderer.domElement.addEventListener('touchstart', e => {
 });
 renderer.domElement.addEventListener('touchmove', e => {
   for (const t of e.changedTouches)
-    if (t.identifier === tLookId && !exhibitOpen) { yaw -= (t.clientX - tX) * 0.003; tX = t.clientX; }
+    if (t.identifier === tLookId) { yaw -= (t.clientX - tX) * 0.003; tX = t.clientX; }
 });
 renderer.domElement.addEventListener('touchend',    e => { for (const t of e.changedTouches) if (t.identifier === tLookId) tLookId = -1; });
 renderer.domElement.addEventListener('touchcancel', e => { for (const t of e.changedTouches) if (t.identifier === tLookId) tLookId = -1; });
@@ -1139,18 +1216,28 @@ function _openExhibit(px, pz, openYaw) {
   exhibitAngle = openYaw;
   exhibitCX    = px;
   exhibitCZ    = pz;
-  const texFns = [makeExhibitTex_A, makeExhibitTex_B, makeExhibitTex_C];
-  exhibitPlanes = [0, 1, 2].map(i => {
-    const a  = exhibitAngle + i * (Math.PI * 2 / 3);
-    const tex = texFns[i]();
+  exhibitPlanes = [0, 1, 2, 3, 4, 5].map(i => {
+    const a   = exhibitAngle + i * (Math.PI * 2 / 6);
     const geo = new THREE.PlaneGeometry(EXHIBIT_W, EXHIBIT_H);
-    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+    const tex = i < 5 ? exhibitTextures[i] : _photographerCardTex;
+    const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(px + Math.sin(a) * EXHIBIT_ORBIT_R, 2.0, pz + Math.cos(a) * EXHIBIT_ORBIT_R);
     mesh.rotation.y = a + Math.PI;
     mesh.scale.setScalar(0.05);
     scene.add(mesh);
-    return { mesh, geo, mat, tex };
+
+    // Frame: same size + FRAME_BORDER overhang, sits just behind image plane
+    const frameGeo = new THREE.PlaneGeometry(EXHIBIT_W + FRAME_BORDER*2, EXHIBIT_H + FRAME_BORDER*2);
+    const frameMat = new THREE.MeshBasicMaterial({
+      map: _exhibitFrameTex, transparent: true, side: THREE.DoubleSide,
+      depthWrite: false, alphaTest: 0.01
+    });
+    const frameMesh = new THREE.Mesh(frameGeo, frameMat);
+    frameMesh.position.z = -0.012; // slightly behind in local space
+    mesh.add(frameMesh);
+
+    return { mesh, geo, mat, frameGeo, frameMat };
   });
 }
 
@@ -1160,7 +1247,9 @@ function _closeExhibit() {
       scene.remove(p.mesh);
       p.geo.dispose();
       p.mat.dispose();
-      p.tex.dispose();
+      p.frameGeo.dispose();
+      p.frameMat.dispose();
+      // photo textures and frame texture are shared; don't dispose
     });
     exhibitPlanes = null;
   }
@@ -1202,23 +1291,21 @@ function animate() {
   _rgt.set(-Math.cos(yaw), 0, Math.sin(yaw));
   let moving = false;
 
-  if (!exhibitOpen) {
-    // Arrow keys rotate camera
-    if(keys['ArrowLeft'])  yaw += CAM_TURN * dt;
-    if(keys['ArrowRight']) yaw -= CAM_TURN * dt;
+  // Arrow keys rotate camera
+  if(keys['ArrowLeft'])  yaw += CAM_TURN * dt;
+  if(keys['ArrowRight']) yaw -= CAM_TURN * dt;
 
-    // WASD moves
-    if(keys['KeyW']) { player.position.addScaledVector(_fwd, SPEED*dt); moving=true; }
-    if(keys['KeyS']) { player.position.addScaledVector(_fwd,-SPEED*dt); moving=true; }
-    if(keys['KeyA']) { player.position.addScaledVector(_rgt,-SPEED*dt); moving=true; }
-    if(keys['KeyD']) { player.position.addScaledVector(_rgt, SPEED*dt); moving=true; }
+  // WASD moves
+  if(keys['KeyW']) { player.position.addScaledVector(_fwd, SPEED*dt); moving=true; }
+  if(keys['KeyS']) { player.position.addScaledVector(_fwd,-SPEED*dt); moving=true; }
+  if(keys['KeyA']) { player.position.addScaledVector(_rgt,-SPEED*dt); moving=true; }
+  if(keys['KeyD']) { player.position.addScaledVector(_rgt, SPEED*dt); moving=true; }
 
-    // Virtual joystick movement
-    if (_joy.active && (Math.abs(_joy.dx) > 8 || Math.abs(_joy.dy) > 8)) {
-      player.position.addScaledVector(_rgt,  (_joy.dx / JR) * SPEED * dt);
-      player.position.addScaledVector(_fwd, -(_joy.dy / JR) * SPEED * dt);
-      moving = true;
-    }
+  // Virtual joystick movement
+  if (_joy.active && (Math.abs(_joy.dx) > 8 || Math.abs(_joy.dy) > 8)) {
+    player.position.addScaledVector(_rgt,  (_joy.dx / JR) * SPEED * dt);
+    player.position.addScaledVector(_fwd, -(_joy.dy / JR) * SPEED * dt);
+    moving = true;
   }
 
   player.position.x = Math.max(-BOUND, Math.min(BOUND, player.position.x));
@@ -1338,12 +1425,13 @@ function animate() {
   // Dismiss exhibition — priority, no cooldown required
   if (eDown && !eWas && exhibitPhase === 'open') {
     exhibitPhase = 'closing';
+    exhibitPlanes.forEach(p => { p.mesh.visible = true; });
     iCD = 0.3;
   // Normal floater interaction
   } else if(eDown&&!eWas&&near.ref&&iCD<=0){
     const f=near.ref;
     if (f === floaters[1] && !exhibitPhase) {
-      _openExhibit(player.position.x, player.position.z, yaw);
+      _openExhibit(f.mesh.position.x, f.mesh.position.z, yaw);
       iCD = 0.5;
     } else if (f !== floaters[1]) {
       showToast(f.message);
@@ -1367,10 +1455,13 @@ function animate() {
     // Orbit — runs every frame regardless of open/opening/closing phase
     exhibitAngle += dt * EXHIBIT_ORBIT_SPD;
     exhibitPlanes.forEach((p, i) => {
-      const a = exhibitAngle + i * (Math.PI * 2 / 3);
+      const a = exhibitAngle + i * (Math.PI * 2 / 6);
       p.mesh.position.x = exhibitCX + Math.sin(a) * EXHIBIT_ORBIT_R;
       p.mesh.position.z = exhibitCZ + Math.cos(a) * EXHIBIT_ORBIT_R;
       p.mesh.rotation.y = a + Math.PI;
+      // hide panels that would appear between or near the camera — widens the visible arc
+      // past the original ±90° to ±109°, showing up to 4 panels at once on desktop
+      if (exhibitPhase === 'open') p.mesh.visible = Math.cos(a - yaw) > -0.6;
     });
 
     if (exhibitPhase === 'opening') {
@@ -1381,13 +1472,12 @@ function animate() {
         const lt      = Math.max(0, Math.min(1, elapsed / rem));
         const s       = lt * lt * (3 - 2 * lt);
         p.mesh.scale.setScalar(0.05 + s * 0.95);
-        p.mat.opacity = s;
       });
       if (exhibitT >= 1) exhibitPhase = 'open';
     } else if (exhibitPhase === 'closing') {
       exhibitT = Math.max(0, exhibitT - dt / EXHIBIT_CLOSE_DUR);
       const s = exhibitT * exhibitT * (3 - 2 * exhibitT);
-      exhibitPlanes.forEach(p => { p.mesh.scale.setScalar(0.05 + s * 0.95); p.mat.opacity = s; });
+      exhibitPlanes.forEach(p => { p.mesh.scale.setScalar(0.05 + s * 0.95); });
       if (exhibitT <= 0) _closeExhibit();
     }
   }
