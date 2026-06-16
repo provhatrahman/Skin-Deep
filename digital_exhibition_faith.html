@@ -1440,12 +1440,14 @@ let _crateSwipeAcc   = 0;
 
 const CRATE_OPEN_DUR    = 0.5;
 const CRATE_CLOSE_DUR   = 0.35;
-const RECORD_SIZE       = 1.25;
-const RECORD_THICK      = 0.05;
-const CRATE_REC_SPACING = 0.15;
-const CRATE_DIST        = 2.6;   // distance in front of player
-const CRATE_Y           = 0.7;   // crate group height off the floor
-const RECORD_BASE_Y     = 0.42;  // record centre height within the crate group
+const RECORD_SIZE       = 2.1;
+const RECORD_THICK      = 0.07;
+const CRATE_REC_SPACING = 0.24;
+const CRATE_DIST        = 3.2;   // distance in front of player
+const CRATE_Y           = 1.05;  // crate group height off the floor
+const RECORD_BASE_Y     = 0.5;   // record centre height within the crate group
+const DISC_PEEK         = RECORD_SIZE * 0.13;  // how far the disc peeks above the sleeve
+const DISC_OUT          = RECORD_SIZE * 0.3;   // extra slide-out when a record is pulled
 const _crateFwd  = new THREE.Vector3();
 const _crateTmpV = new THREE.Vector3();
 const _crateTmpQ = new THREE.Quaternion();
@@ -2018,10 +2020,10 @@ function _crateRecordTargets(i) {
 
 function _buildCrateBox() {
   const g = new THREE.Group();
-  const innerW = RECORD_SIZE + 0.28;
-  const depth  = 1.05;
-  const tall   = 0.85;   // back/side wall height
-  const front  = 0.45;   // shorter front wall so records stay visible
+  const innerW = RECORD_SIZE + 0.45;
+  const depth  = 1.5;
+  const tall   = RECORD_SIZE * 0.72;   // back/side wall height
+  const front  = RECORD_SIZE * 0.4;    // shorter front wall so records stay visible
   const mat = new THREE.MeshStandardMaterial({ map: VINYL.crateTex, roughness: 0.9, metalness: 0.05, color: 0x9a7a5a, side: THREE.DoubleSide });
 
   const bottom = new THREE.Mesh(new THREE.PlaneGeometry(innerW, depth), mat);
@@ -2067,7 +2069,7 @@ function _buildCrateRecord(rec) {
   const discGeo = new THREE.CircleGeometry(RECORD_SIZE * 0.46, 48);
   const discMat = new THREE.MeshBasicMaterial({ map: VINYL.discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
   const disc = new THREE.Mesh(discGeo, discMat);
-  disc.position.set(0, 0.16, -RECORD_THICK * 0.5 - 0.002);
+  disc.position.set(0, DISC_PEEK, -RECORD_THICK * 0.5 - 0.002);
   grp.add(disc);
 
   grp.userData = {
@@ -2722,7 +2724,7 @@ function animate() {
         ud.discOut += (0 - ud.discOut) * k;
         r.position.set(0, RECORD_BASE_Y, ud.z);
         r.rotation.set(ud.lean, 0, 0);
-        ud.disc.position.y = 0.16 + ud.discOut;
+        ud.disc.position.y = DISC_PEEK + ud.discOut;
       });
 
       // Pull-out / flip / return of the selected record (animated in world space)
@@ -2737,8 +2739,8 @@ function animate() {
           _focusLerpQuat.slerpQuaternions(_focusFromQuat, _focusToQuat, s);
           r.quaternion.copy(_focusLerpQuat);
           r.scale.setScalar(_focusFromScale + (fs - _focusFromScale) * s);
-          ud.discOut += (0.34 - ud.discOut) * k;
-          ud.disc.position.y = 0.16 + ud.discOut;
+          ud.discOut += (DISC_OUT - ud.discOut) * k;
+          ud.disc.position.y = DISC_PEEK + ud.discOut;
           if (crateFocusT >= 1) { crateFocusPhase = 'pulled'; _showCrateHint('pulled'); }
         } else if (crateFocusPhase === 'pulled') {
           const fs = _computeExhibitFocusTarget(_focusToPos, _focusToQuat, RECORD_SIZE, RECORD_SIZE);
@@ -2748,7 +2750,7 @@ function animate() {
           r.position.copy(_focusToPos);
           r.quaternion.copy(_crateTmpQ);
           r.scale.setScalar(fs);
-          ud.disc.position.y = 0.16 + 0.34;
+          ud.disc.position.y = DISC_PEEK + DISC_OUT;
         } else if (crateFocusPhase === 'returning') {
           crateFocusT = Math.min(1, crateFocusT + dt / EXHIBIT_FOCUS_DUR);
           const s = crateFocusT * crateFocusT * (3 - 2 * crateFocusT);
@@ -2762,14 +2764,14 @@ function animate() {
           r.quaternion.copy(_focusLerpQuat);
           r.scale.setScalar(_focusFromScale + (1 - _focusFromScale) * s);
           ud.discOut += (0 - ud.discOut) * k;
-          ud.disc.position.y = 0.16 + ud.discOut;
+          ud.disc.position.y = DISC_PEEK + ud.discOut;
           if (crateFocusT >= 1) {
             crateGroup.attach(r);
             r.position.set(0, RECORD_BASE_Y, tgt.z);
             r.rotation.set(tgt.lean, 0, 0);
             r.scale.setScalar(1);
             ud.lean = tgt.lean; ud.z = tgt.z; ud.discOut = 0;
-            ud.disc.position.y = 0.16;
+            ud.disc.position.y = DISC_PEEK;
             crateFocusPhase = null;
             crateFocusT = 0;
             _showCrateHint('browsing');
