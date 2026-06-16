@@ -167,6 +167,25 @@
   }
   #focus-escape-hint.visible { opacity: 1; }
   #focus-escape-hint.dim { opacity: 0.22; transition: opacity 1.8s ease; }
+
+  /* ── CRATE BACK / CLOSE BUTTON ── */
+  #crate-back-btn {
+    position: fixed; top: 20px; left: 20px; z-index: 26;
+    width: 42px; height: 42px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(255,220,140,0.9);
+    background: rgba(4,2,0,0.72);
+    border: 1px solid rgba(255,200,100,0.3);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.8), 0 0 14px rgba(255,180,60,0.18), inset 0 1px 0 rgba(255,200,100,0.08);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    cursor: pointer; opacity: 0; pointer-events: none;
+    transition: opacity 0.3s ease, transform 0.12s ease;
+  }
+  #crate-back-btn.visible { opacity: 1; pointer-events: auto; }
+  #crate-back-btn:active { transform: scale(0.92); }
+  @media (pointer: coarse) {
+    #crate-back-btn { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  }
   .feh-key {
     font-family: Georgia, serif; font-size: 9px; letter-spacing: 0.08em;
     color: rgba(255,220,140,0.9); padding: 2px 7px;
@@ -398,6 +417,9 @@
 </div>
 <div id="aim-reticle"></div>
 <div id="focus-escape-hint"></div>
+<button id="crate-back-btn" aria-label="back">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 18l-6-6 6-6"/></svg>
+</button>
 <div id="tut-guide-dot"><div class="tut-gdot-ring"></div><div class="tut-gdot-ball"></div></div>
 <div id="tut-overlay">
   <div id="tut-card">
@@ -731,6 +753,193 @@ function makeMasjidUnclesCardTex() {
   return new THREE.CanvasTexture(cv);
 }
 
+// ── VINYL CRATE ASSET TEXTURES ──
+// Square album-cover placeholders. Swap for real art later by loading image files
+// into VINYL.records[i].coverTex instead (see _buildVinylAssets).
+function makeRecordCoverTex(i, title) {
+  const S = 512;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  const palettes = [
+    ['#1a0f2e', '#7b2ff7', '#f72f9b'],
+    ['#0d1b2a', '#1b9aaa', '#ffd166'],
+    ['#2a0a05', '#e85d04', '#ffba08'],
+    ['#06130f', '#2dc653', '#d8f3dc'],
+  ];
+  const pal = palettes[i % palettes.length];
+
+  const bg = ctx.createLinearGradient(0, 0, S, S);
+  bg.addColorStop(0, pal[0]);
+  bg.addColorStop(1, pal[1]);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, S, S);
+
+  ctx.save();
+  ctx.fillStyle = pal[2];
+  ctx.strokeStyle = pal[2];
+  if (i % 4 === 0) {
+    ctx.globalAlpha = 0.85;
+    for (let r = 40; r < S * 0.6; r += 34) {
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(S * 0.5, S * 0.42, r, 0, Math.PI * 2); ctx.stroke();
+    }
+  } else if (i % 4 === 1) {
+    ctx.globalAlpha = 0.8;
+    for (let x = 60; x < S - 40; x += 56) {
+      const h = 60 + Math.abs(Math.sin(x * 0.05)) * 220;
+      ctx.fillRect(x, S * 0.62 - h, 30, h);
+    }
+  } else if (i % 4 === 2) {
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.moveTo(S * 0.5, 70);
+    ctx.lineTo(S * 0.82, S * 0.62);
+    ctx.lineTo(S * 0.18, S * 0.62);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 2;
+    for (let g = 70; g < S - 40; g += 48) {
+      ctx.beginPath(); ctx.moveTo(g, 60); ctx.lineTo(g, S * 0.62); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(60, g); ctx.lineTo(S - 60, g); ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  const vg = ctx.createRadialGradient(S / 2, S / 2, 60, S / 2, S / 2, S * 0.72);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.5)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, S, S);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(18, 18, S - 36, S - 36);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,0.96)';
+  ctx.font = '700 44px Georgia, serif';
+  ctx.shadowColor = 'rgba(0,0,0,0.6)';
+  ctx.shadowBlur = 12;
+  ctx.fillText((title || 'UNTITLED').toUpperCase(), S / 2, S * 0.82);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = '400 18px Georgia, serif';
+  ctx.fillText('SKIN DEEP RECORDINGS', S / 2, S * 0.9);
+
+  return new THREE.CanvasTexture(cv);
+}
+
+function makeRecordBackTex(i, title) {
+  const S = 512;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+
+  ctx.fillStyle = 'rgb(10,7,4)';
+  ctx.fillRect(0, 0, S, S);
+  ctx.strokeStyle = 'rgba(255,200,100,0.25)';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(20, 20, S - 40, S - 40);
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,235,170,0.95)';
+  ctx.font = '700 30px Georgia, serif';
+  ctx.fillText((title || 'UNTITLED').toUpperCase(), 46, 78);
+
+  ctx.strokeStyle = 'rgba(255,200,100,0.2)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(46, 96); ctx.lineTo(S - 46, 96); ctx.stroke();
+
+  ctx.fillStyle = 'rgba(255,200,100,0.5)';
+  ctx.font = '400 16px Georgia, serif';
+  ctx.fillText('SIDE A', 46, 132);
+
+  ctx.font = '400 20px Georgia, serif';
+  for (let t = 0; t < 6; t++) {
+    const y = 172 + t * 42;
+    ctx.fillStyle = 'rgba(255,210,135,0.8)';
+    ctx.fillText((t + 1) + '.', 46, y);
+    ctx.strokeStyle = 'rgba(255,200,100,0.18)';
+    ctx.beginPath(); ctx.moveTo(86, y - 6); ctx.lineTo(S - 60, y - 6); ctx.stroke();
+  }
+
+  ctx.fillStyle = 'rgba(255,200,100,0.32)';
+  ctx.font = '400 14px Georgia, serif';
+  ctx.fillText('SKIN DEEP RECORDINGS  ·  SD-00' + (i + 1), 46, S - 40);
+
+  return new THREE.CanvasTexture(cv);
+}
+
+// Black vinyl disc — concentric grooves + coloured centre label. Transparent corners
+// so it reads as a circle on a plane. Shared across all four records.
+function makeVinylDiscTex() {
+  const S = 512;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  const cx = S / 2, cy = S / 2, R = S / 2 - 2;
+
+  ctx.clearRect(0, 0, S, S);
+  ctx.fillStyle = '#0b0b0d';
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+
+  ctx.strokeStyle = 'rgba(120,120,130,0.22)';
+  ctx.lineWidth = 1;
+  for (let r = R * 0.36; r < R - 4; r += 4) {
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  const sheen = ctx.createLinearGradient(0, 0, S, S);
+  sheen.addColorStop(0, 'rgba(255,255,255,0.05)');
+  sheen.addColorStop(0.5, 'rgba(255,255,255,0)');
+  sheen.addColorStop(1, 'rgba(255,255,255,0.06)');
+  ctx.fillStyle = sheen;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = '#d8902a';
+  ctx.beginPath(); ctx.arc(cx, cy, R * 0.34, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, R * 0.34, 0, Math.PI * 2); ctx.stroke();
+
+  ctx.fillStyle = '#0b0b0d';
+  ctx.beginPath(); ctx.arc(cx, cy, R * 0.03, 0, Math.PI * 2); ctx.fill();
+
+  const tex = new THREE.CanvasTexture(cv);
+  return tex;
+}
+
+// Dark wooden crate side panel.
+function makeCrateTex() {
+  const S = 256;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+
+  ctx.fillStyle = '#3a2516';
+  ctx.fillRect(0, 0, S, S);
+
+  for (let p = 0; p < 4; p++) {
+    const y = p * (S / 4);
+    const shade = 26 + (p % 2) * 10;
+    ctx.fillStyle = `rgb(${shade + 30},${shade + 14},${shade})`;
+    ctx.fillRect(0, y + 2, S, S / 4 - 4);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, y + 2, S, S / 4 - 4);
+    for (let g = 0; g < 14; g++) {
+      ctx.strokeStyle = `rgba(20,12,6,${0.08 + Math.random() * 0.1})`;
+      ctx.lineWidth = 1;
+      const gy = y + 6 + Math.random() * (S / 4 - 12);
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.bezierCurveTo(S * 0.3, gy + 3, S * 0.6, gy - 3, S, gy); ctx.stroke();
+    }
+  }
+  return new THREE.CanvasTexture(cv);
+}
+
 const _texLoader = new THREE.TextureLoader();
 const _frameTexCache = new Map();
 
@@ -800,6 +1009,43 @@ const EXHIBITS = [
     _loaded: false,
   },
 ];
+
+// Vinyl crate exhibit — triggered by floater 3 (the pink torus). Cover/back art is
+// procedural for now. To use real art later, set `paths`/`backPaths` to square image
+// files and load them in _buildVinylAssets the same way loadExhibitTextures() does.
+const VINYL = {
+  floaterIdx: 3,
+  // paths:     ['images/vinyl/rec1.jpg', 'images/vinyl/rec2.jpg', ...],
+  // backPaths: ['images/vinyl/rec1-back.jpg', ...],
+  records: [
+    { title: 'Phase One' },
+    { title: 'Nocturne' },
+    { title: 'Resonance' },
+    { title: 'Afterglow' },
+  ],
+  discTex: null,
+  crateTex: null,
+  _built: false,
+};
+
+function _buildVinylAssets() {
+  if (VINYL._built) return;
+  VINYL._built = true;
+  VINYL.records.forEach((r, i) => {
+    if (VINYL.paths && VINYL.paths[i]) {
+      r.coverTex = _configExhibitTex(_texLoader.load(VINYL.paths[i]));
+    } else {
+      r.coverTex = makeRecordCoverTex(i, r.title);
+    }
+    if (VINYL.backPaths && VINYL.backPaths[i]) {
+      r.backTex = _configExhibitTex(_texLoader.load(VINYL.backPaths[i]));
+    } else {
+      r.backTex = makeRecordBackTex(i, r.title);
+    }
+  });
+  VINYL.discTex = makeVinylDiscTex();
+  VINYL.crateTex = makeCrateTex();
+}
 
 function loadExhibitTextures() {
   EXHIBITS.forEach(ex => {
@@ -1077,6 +1323,7 @@ floaterData.forEach(fd => {
 const _exhibitByFloater = new Map(
   EXHIBITS.map(ex => [floaters[ex.floaterIdx], ex])
 );
+const _crateFloater = floaters[VINYL.floaterIdx];
 
 // Mobile shared point-light pool — repositioned each frame to the nearest floaters,
 // so we pay for 3 dynamic lights instead of 9 regardless of how many objects exist.
@@ -1174,6 +1421,38 @@ let exhibitFocusPhase  = null;   // 'focusing' | 'focused' | 'unfocusing'
 let exhibitFocusT      = 0;
 let focusDimT          = 0;
 
+// ── VINYL CRATE STATE ──
+let crateOpen        = false;
+let cratePhase       = null;     // 'opening' | 'browsing' | 'closing' | null
+let crateT           = 0;
+let crateGroup       = null;
+let crateRecords     = [];
+let crateSelIdx      = 0;
+let crateFocusPhase  = null;     // 'pulling' | 'pulled' | 'returning' | null
+let crateFocusT      = 0;
+let crateFlipT       = 0;        // 0 = front cover, 1 = back/tracklist
+let crateFlipped     = false;
+let _crateNavLWas    = false;
+let _crateNavRWas    = false;
+let _crateBackWas    = false;
+let _crateBackRequested = false;
+let _crateSwipeAcc   = 0;
+
+const CRATE_OPEN_DUR    = 0.5;
+const CRATE_CLOSE_DUR   = 0.35;
+const RECORD_SIZE       = 1.25;
+const RECORD_THICK      = 0.05;
+const CRATE_REC_SPACING = 0.15;
+const CRATE_DIST        = 2.6;   // distance in front of player
+const CRATE_Y           = 0.7;   // crate group height off the floor
+const RECORD_BASE_Y     = 0.42;  // record centre height within the crate group
+const _crateFwd  = new THREE.Vector3();
+const _crateTmpV = new THREE.Vector3();
+const _crateTmpQ = new THREE.Quaternion();
+const _crateFlipQ = new THREE.Quaternion();
+const _crateUpY  = new THREE.Vector3(0, 1, 0);
+const _crateEuler = new THREE.Euler();
+
 // ══════════════════════════════════════════
 //  INPUT
 // ══════════════════════════════════════════
@@ -1199,9 +1478,25 @@ renderer.domElement.addEventListener('touchstart', e => {
     if (t.clientX > window.innerWidth * 0.4 && tLookId === -1) {
       tX = t.clientX; tLookId = t.identifier;
       _tutTX[t.identifier] = t.clientX;
+      _crateSwipeAcc = 0;
     }
 });
 renderer.domElement.addEventListener('touchmove', e => {
+  // While the crate is open, repurpose horizontal swipes to flip through records
+  // and never rotate the camera.
+  if (crateOpen) {
+    if (cratePhase === 'browsing' && !crateFocusPhase) {
+      for (const t of e.changedTouches) {
+        if (t.identifier === tLookId) {
+          _crateSwipeAcc += (t.clientX - tX);
+          tX = t.clientX;
+          if (_crateSwipeAcc < -55) { _crateFlip(1); _crateSwipeAcc = 0; }
+          else if (_crateSwipeAcc > 55) { _crateFlip(-1); _crateSwipeAcc = 0; }
+        }
+      }
+    }
+    return;
+  }
   if (exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused') return;
   for (const t of e.changedTouches)
     if (t.identifier === tLookId) { yaw -= (t.clientX - tX) * 0.003; tX = t.clientX; }
@@ -1707,6 +2002,205 @@ function _closeExhibit() {
   iCD = 0.6;
 }
 
+// ══════════════════════════════════════════
+//  VINYL CRATE
+// ══════════════════════════════════════════
+const _crateTgt = { z: 0, lean: 0 };
+function _crateRecordTargets(i) {
+  // Fills a shared { z, lean } for record i relative to the selected record,
+  // producing the crate-digging fan: viewed records pile forward, upcoming lean back.
+  const rel = i - crateSelIdx;
+  if (rel === 0) { _crateTgt.z = 0.06; _crateTgt.lean = 0.05; }
+  else if (rel < 0) { _crateTgt.z = 0.22 + (-rel - 1) * 0.05; _crateTgt.lean = 0.92; }
+  else { _crateTgt.z = -0.06 - rel * CRATE_REC_SPACING; _crateTgt.lean = -0.5 - (rel - 1) * 0.04; }
+  return _crateTgt;
+}
+
+function _buildCrateBox() {
+  const g = new THREE.Group();
+  const innerW = RECORD_SIZE + 0.28;
+  const depth  = 1.05;
+  const tall   = 0.85;   // back/side wall height
+  const front  = 0.45;   // shorter front wall so records stay visible
+  const mat = new THREE.MeshStandardMaterial({ map: VINYL.crateTex, roughness: 0.9, metalness: 0.05, color: 0x9a7a5a, side: THREE.DoubleSide });
+
+  const bottom = new THREE.Mesh(new THREE.PlaneGeometry(innerW, depth), mat);
+  bottom.rotation.x = -Math.PI / 2;
+  bottom.position.y = -tall / 2;
+  g.add(bottom);
+
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(innerW, tall), mat);
+  back.position.set(0, 0, -depth / 2);
+  g.add(back);
+
+  const frontW = new THREE.Mesh(new THREE.PlaneGeometry(innerW, front), mat);
+  frontW.position.set(0, -tall / 2 + front / 2, depth / 2);
+  g.add(frontW);
+
+  const sideGeo = new THREE.PlaneGeometry(depth, tall);
+  const left = new THREE.Mesh(sideGeo, mat);
+  left.rotation.y = Math.PI / 2;
+  left.position.set(-innerW / 2, 0, 0);
+  g.add(left);
+  const right = new THREE.Mesh(sideGeo, mat);
+  right.rotation.y = -Math.PI / 2;
+  right.position.set(innerW / 2, 0, 0);
+  g.add(right);
+
+  g.userData.parts = [bottom, back, frontW, left, right];
+  g.userData.boxMat = mat;
+  return g;
+}
+
+function _buildCrateRecord(rec) {
+  const grp = new THREE.Group();
+
+  const edgeMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.8, metalness: 0.0 });
+  // Emissive map at low intensity keeps the art readable in the dim room without washing out.
+  const coverMat = new THREE.MeshStandardMaterial({ map: rec.coverTex, emissive: 0xffffff, emissiveMap: rec.coverTex, emissiveIntensity: 0.4, roughness: 0.55, metalness: 0.0 });
+  const backMat  = new THREE.MeshStandardMaterial({ map: rec.backTex, emissive: 0xffffff, emissiveMap: rec.backTex, emissiveIntensity: 0.4, roughness: 0.55, metalness: 0.0 });
+  // BoxGeometry face order: +X,-X,+Y,-Y,+Z,-Z. Cover faces +Z (toward player), back -Z.
+  const sleeveGeo = new THREE.BoxGeometry(RECORD_SIZE, RECORD_SIZE, RECORD_THICK);
+  const sleeve = new THREE.Mesh(sleeveGeo, [edgeMat, edgeMat, edgeMat, edgeMat, coverMat, backMat]);
+  grp.add(sleeve);
+
+  const discGeo = new THREE.CircleGeometry(RECORD_SIZE * 0.46, 48);
+  const discMat = new THREE.MeshBasicMaterial({ map: VINYL.discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
+  const disc = new THREE.Mesh(discGeo, discMat);
+  disc.position.set(0, 0.16, -RECORD_THICK * 0.5 - 0.002);
+  grp.add(disc);
+
+  grp.userData = {
+    sleeve, disc, sleeveGeo, discGeo,
+    mats: [edgeMat, coverMat, backMat, discMat],
+    lean: -0.5, z: -0.3, discOut: 0,
+  };
+  return grp;
+}
+
+function _openCrate(px, pz, openYaw) {
+  if (cratePhase || exhibitPhase) return;
+  _buildVinylAssets();
+  _savedDPR = curDPR;
+  curDPR = EXHIBIT_DPR;
+  _applyDPR();
+
+  crateOpen   = true;
+  cratePhase  = 'opening';
+  crateT      = 0;
+  crateSelIdx = 0;
+  crateFocusPhase = null;
+  crateFocusT = 0;
+  crateFlipT  = 0;
+  crateFlipped = false;
+
+  crateGroup = new THREE.Group();
+  // Place in front of the player, crate front (+Z local) facing the player/camera.
+  _crateFwd.set(Math.sin(openYaw), 0, Math.cos(openYaw));
+  crateGroup.position.set(px + _crateFwd.x * CRATE_DIST, CRATE_Y, pz + _crateFwd.z * CRATE_DIST);
+  crateGroup.rotation.y = openYaw + Math.PI;
+  scene.add(crateGroup);
+
+  const box = _buildCrateBox();
+  crateGroup.add(box);
+  crateGroup.userData = { box };
+
+  crateRecords = VINYL.records.map((rec, i) => {
+    const grp = _buildCrateRecord(rec);
+    const tgt = _crateRecordTargets(i);
+    grp.userData.lean = tgt.lean;
+    grp.userData.z = tgt.z;
+    grp.position.set(0, RECORD_BASE_Y, tgt.z);
+    grp.rotation.x = tgt.lean;
+    crateGroup.add(grp);
+    return grp;
+  });
+
+  crateGroup.scale.setScalar(0.04);
+}
+
+function _disposeCrateObject(obj) {
+  obj.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) {
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      // Shared VINYL textures (cover/back/disc/crate) are reused across opens — keep them.
+      mats.forEach(m => m.dispose());
+    }
+  });
+}
+
+function _closeCrate() {
+  if (crateRecords.length) {
+    // A pulled-out record may be parented to the scene; remove it explicitly.
+    crateRecords.forEach(r => { if (r.parent && r.parent !== crateGroup) r.parent.remove(r); });
+  }
+  if (crateGroup) {
+    _disposeCrateObject(crateGroup);
+    scene.remove(crateGroup);
+    crateGroup = null;
+  }
+  crateRecords = [];
+  crateOpen   = false;
+  cratePhase  = null;
+  crateT      = 0;
+  crateFocusPhase = null;
+  crateFocusT = 0;
+  crateSelIdx = 0;
+  _hideFocusEscapeHint();
+  if (_elCrateBack) _elCrateBack.classList.remove('visible');
+  curDPR = _savedDPR;
+  _applyDPR();
+  iCD = 0.6;
+}
+
+function _crateStartClose() {
+  if (cratePhase !== 'browsing' || crateFocusPhase) return;
+  _hideFocusEscapeHint();
+  cratePhase = 'closing';
+  crateT = 1;
+}
+
+function _crateFlip(dir) {
+  if (cratePhase !== 'browsing' || crateFocusPhase) return;
+  const n = crateRecords.length;
+  crateSelIdx = Math.max(0, Math.min(n - 1, crateSelIdx + dir));
+}
+
+function _cratePull() {
+  if (cratePhase !== 'browsing' || crateFocusPhase) return;
+  const r = crateRecords[crateSelIdx];
+  scene.attach(r); // preserve world transform; animate in world space like exhibit focus
+  r.getWorldPosition(_focusFromPos);
+  _focusFromQuat.copy(r.quaternion);
+  _focusFromScale = r.scale.x;
+  crateFocusPhase = 'pulling';
+  crateFocusT = 0;
+  crateFlipT = 0;
+  crateFlipped = false;
+}
+
+function _crateFlipFace() {
+  if (crateFocusPhase !== 'pulled') return;
+  crateFlipped = !crateFlipped;
+}
+
+function _crateReturn() {
+  if (crateFocusPhase !== 'pulled') return;
+  _hideFocusEscapeHint();
+  const r = crateRecords[crateSelIdx];
+  r.getWorldPosition(_focusFromPos);
+  _focusFromQuat.copy(r.quaternion);
+  _focusFromScale = r.scale.x;
+  crateFocusPhase = 'returning';
+  crateFocusT = 0;
+}
+
+function _crateBackAction() {
+  if (crateFocusPhase === 'pulled') _crateReturn();
+  else if (cratePhase === 'browsing' && !crateFocusPhase) _crateStartClose();
+}
+
 // Mobile frame-rate governor (caps to 60fps on high-refresh devices)
 let _mobileAcc = 0;
 const _MOBILE_TARGET = 1 / 60;
@@ -1737,6 +2231,7 @@ const _elIprIcon     = document.getElementById('ipr-icon');
 const _elAimReticle  = document.getElementById('aim-reticle');
 const _elMmWrap           = document.getElementById('minimap-wrap');
 const _elFocusEscapeHint  = document.getElementById('focus-escape-hint');
+const _elCrateBack        = document.getElementById('crate-back-btn');
 let   _focusEscapeTimer   = null;
 
 function _showFocusEscapeHint() {
@@ -1752,6 +2247,28 @@ function _showFocusEscapeHint() {
 function _hideFocusEscapeHint() {
   clearTimeout(_focusEscapeTimer);
   _elFocusEscapeHint.classList.remove('visible', 'dim');
+}
+
+function _showCrateHint(state) {
+  if (state === 'pulled') {
+    _elFocusEscapeHint.innerHTML = isMobile
+      ? `<span class="feh-label">tap to flip</span>`
+      : `<span class="feh-key">spc</span><span class="feh-label">flip</span><span class="feh-key">esc</span><span class="feh-label">back</span>`;
+  } else { // browsing
+    _elFocusEscapeHint.innerHTML = isMobile
+      ? `<span class="feh-label">swipe to dig</span><span class="feh-label" style="opacity:0.4">&middot;</span><span class="feh-label">tap to lift</span>`
+      : `<span class="feh-key">&larr; &rarr;</span><span class="feh-label">dig</span><span class="feh-key">spc</span><span class="feh-label">lift</span><span class="feh-key">esc</span><span class="feh-label">close</span>`;
+  }
+  _elFocusEscapeHint.classList.remove('dim');
+  _elFocusEscapeHint.classList.add('visible');
+  clearTimeout(_focusEscapeTimer);
+  if (_elCrateBack) _elCrateBack.classList.add('visible');
+}
+
+if (_elCrateBack) {
+  const _crateBackFire = e => { e.preventDefault(); e.stopPropagation(); _crateBackRequested = true; };
+  _elCrateBack.addEventListener('click', _crateBackFire);
+  _elCrateBack.addEventListener('touchstart', _crateBackFire, { passive: false });
 }
 
 function animate() {
@@ -1771,7 +2288,7 @@ function animate() {
   _emaFrameMs = _emaFrameMs * 0.9 + (_nowTs - _lastFrameTs) * 0.1;
   _lastFrameTs = _nowTs;
   // Paused while an exhibit is open so an FPS dip can't claw back card resolution
-  if (!exhibitPhase && ++_drsFrame >= _DRS_INTERVAL) {
+  if (!exhibitPhase && !crateOpen && ++_drsFrame >= _DRS_INTERVAL) {
     _drsFrame = 0;
     const fps = 1000 / _emaFrameMs;
     if (fps < 54 && curDPR > MIN_DPR) {            // dropping frames — back off resolution fast
@@ -1785,15 +2302,17 @@ function animate() {
   _rgt.set(-Math.cos(yaw), 0, Math.sin(yaw));
   let moving = false;
   const _exhibitLocked = exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused';
+  // The crate is a focused interaction — freeze movement and turning while it is open.
+  const _inputLocked = _exhibitLocked || crateOpen;
 
-  // Arrow keys rotate camera — frozen while reading a focused panel
-  if (!_exhibitLocked) {
+  // Arrow keys rotate camera — frozen while reading a focused panel / crate
+  if (!_inputLocked) {
     if(keys['ArrowLeft'])  yaw += CAM_TURN * dt;
     if(keys['ArrowRight']) yaw -= CAM_TURN * dt;
   }
 
   // WASD moves
-  if (!_exhibitLocked) {
+  if (!_inputLocked) {
     if(keys['KeyW']) { player.position.addScaledVector(_fwd, SPEED*dt); moving=true; }
     if(keys['KeyS']) { player.position.addScaledVector(_fwd,-SPEED*dt); moving=true; }
     if(keys['KeyA']) { player.position.addScaledVector(_rgt,-SPEED*dt); moving=true; }
@@ -1801,7 +2320,7 @@ function animate() {
   }
 
   // Virtual joystick movement
-  if (!_exhibitLocked && _joy.active && (Math.abs(_joy.dx) > 8 || Math.abs(_joy.dy) > 8)) {
+  if (!_inputLocked && _joy.active && (Math.abs(_joy.dx) > 8 || Math.abs(_joy.dy) > 8)) {
     player.position.addScaledVector(_rgt,  (_joy.dx / JR) * SPEED * dt);
     player.position.addScaledVector(_fwd, -(_joy.dy / JR) * SPEED * dt);
     moving = true;
@@ -1930,7 +2449,7 @@ function animate() {
   let exhibitCanFocus = exhibitAimedIdx >= 0;
 
   // Proximity prompt — project above the near object (hidden while exhibit is open)
-  if (near.ref && tutStage >= 3 && iCD <= 0 && !exhibitOpen && !_elToast.classList.contains('visible')) {
+  if (near.ref && tutStage >= 3 && iCD <= 0 && !exhibitOpen && !crateOpen && !_elToast.classList.contains('visible')) {
     const _wp = new THREE.Vector3();
     near.ref.mesh.getWorldPosition(_wp);
     _wp.y += 0.55; // offset just above object
@@ -1989,8 +2508,36 @@ function animate() {
     _elAimReticle.classList.remove('locked');
   }
 
+  // ── CRATE NAVIGATION (flip through records) ──
+  if (cratePhase === 'browsing' && !crateFocusPhase) {
+    const navL = keys['ArrowLeft'] || keys['KeyA'];
+    const navR = keys['ArrowRight'] || keys['KeyD'];
+    if (navL && !_crateNavLWas) _crateFlip(-1);
+    if (navR && !_crateNavRWas) _crateFlip(1);
+    _crateNavLWas = navL; _crateNavRWas = navR;
+  } else {
+    _crateNavLWas = false; _crateNavRWas = false;
+  }
+
+  // ── CRATE BACK / CLOSE (Esc or B, or on-screen button) ──
+  const _crateBackKey = !!(keys['Escape'] || keys['KeyB']);
+  if (crateOpen && iCD <= 0 && ((_crateBackKey && !_crateBackWas) || _crateBackRequested)) {
+    _crateBackAction();
+    iCD = 0.35;
+  }
+  _crateBackWas = _crateBackKey;
+  _crateBackRequested = false;
+
+  // Crate: lift the centred record out of the bin
+  if (eDown && !eWas && cratePhase === 'browsing' && !crateFocusPhase && iCD <= 0) {
+    _cratePull();
+    iCD = 0.35;
+  // Crate: flip the pulled record between front cover and back/tracklist
+  } else if (eDown && !eWas && crateFocusPhase === 'pulled' && iCD <= 0) {
+    _crateFlipFace();
+    iCD = 0.3;
   // Dismiss exhibition — only when orbiting and nothing is aimed
-  if (eDown && !eWas && exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) {
+  } else if (eDown && !eWas && exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) {
     exhibitPhase = 'closing';
     exhibitPlanes.forEach(p => { p.mesh.visible = true; p.mesh.material.opacity = 1; });
     iCD = 0.3;
@@ -2011,7 +2558,11 @@ function animate() {
     if (ex && !exhibitPhase) {
       _openExhibit(ex, player.position.x, player.position.z, yaw);
       iCD = 0.5;
-    } else if (!ex) {
+    } else if (f === _crateFloater && !cratePhase && !exhibitPhase) {
+      _openCrate(player.position.x, player.position.z, yaw);
+      _showCrateHint('browsing');
+      iCD = 0.5;
+    } else if (!ex && f !== _crateFloater) {
       showToast(f.message);
       if (!roomRevealed && f === floaters[0]) {
         roomRevealed = true;
@@ -2141,7 +2692,94 @@ function animate() {
     }
   }
 
-  _elKeySpace.classList.toggle('active', !!(near.ref && !exhibitOpen) || exhibitCanFocus || exhibitFocusPhase === 'focused');
+  // ── VINYL CRATE animation tick ──
+  if (cratePhase) {
+    _elMmWrap.classList.toggle('focus-hidden', crateFocusPhase === 'pulling' || crateFocusPhase === 'pulled');
+
+    if (cratePhase === 'opening') {
+      crateT = Math.min(1, crateT + dt / CRATE_OPEN_DUR);
+      const s = crateT * crateT * (3 - 2 * crateT);
+      if (crateGroup) crateGroup.scale.setScalar(0.04 + s * 0.96);
+      if (crateT >= 1) cratePhase = 'browsing';
+    } else if (cratePhase === 'closing') {
+      crateT = Math.max(0, crateT - dt / CRATE_CLOSE_DUR);
+      const s = crateT * crateT * (3 - 2 * crateT);
+      if (crateGroup) crateGroup.scale.setScalar(0.04 + s * 0.96);
+      if (crateT <= 0) { _closeCrate(); }
+    }
+
+    if (crateGroup) {
+      crateGroup.position.y = CRATE_Y + Math.sin(t * 1.4) * 0.03;
+
+      // Fan the records toward their crate-digging targets (skip the focused one)
+      const k = Math.min(1, dt * 9);
+      crateRecords.forEach((r, i) => {
+        if (crateFocusPhase && i === crateSelIdx) return;
+        const tgt = _crateRecordTargets(i);
+        const ud = r.userData;
+        ud.lean += (tgt.lean - ud.lean) * k;
+        ud.z    += (tgt.z - ud.z) * k;
+        ud.discOut += (0 - ud.discOut) * k;
+        r.position.set(0, RECORD_BASE_Y, ud.z);
+        r.rotation.set(ud.lean, 0, 0);
+        ud.disc.position.y = 0.16 + ud.discOut;
+      });
+
+      // Pull-out / flip / return of the selected record (animated in world space)
+      if (crateFocusPhase) {
+        const r = crateRecords[crateSelIdx];
+        const ud = r.userData;
+        if (crateFocusPhase === 'pulling') {
+          crateFocusT = Math.min(1, crateFocusT + dt / EXHIBIT_FOCUS_DUR);
+          const s = crateFocusT * crateFocusT * (3 - 2 * crateFocusT);
+          const fs = _computeExhibitFocusTarget(_focusToPos, _focusToQuat, RECORD_SIZE, RECORD_SIZE);
+          r.position.lerpVectors(_focusFromPos, _focusToPos, s);
+          _focusLerpQuat.slerpQuaternions(_focusFromQuat, _focusToQuat, s);
+          r.quaternion.copy(_focusLerpQuat);
+          r.scale.setScalar(_focusFromScale + (fs - _focusFromScale) * s);
+          ud.discOut += (0.34 - ud.discOut) * k;
+          ud.disc.position.y = 0.16 + ud.discOut;
+          if (crateFocusT >= 1) { crateFocusPhase = 'pulled'; _showCrateHint('pulled'); }
+        } else if (crateFocusPhase === 'pulled') {
+          const fs = _computeExhibitFocusTarget(_focusToPos, _focusToQuat, RECORD_SIZE, RECORD_SIZE);
+          crateFlipT += ((crateFlipped ? 1 : 0) - crateFlipT) * Math.min(1, dt * 7);
+          _crateFlipQ.setFromAxisAngle(_crateUpY, Math.PI * crateFlipT);
+          _crateTmpQ.copy(_focusToQuat).multiply(_crateFlipQ);
+          r.position.copy(_focusToPos);
+          r.quaternion.copy(_crateTmpQ);
+          r.scale.setScalar(fs);
+          ud.disc.position.y = 0.16 + 0.34;
+        } else if (crateFocusPhase === 'returning') {
+          crateFocusT = Math.min(1, crateFocusT + dt / EXHIBIT_FOCUS_DUR);
+          const s = crateFocusT * crateFocusT * (3 - 2 * crateFocusT);
+          const tgt = _crateRecordTargets(crateSelIdx);
+          crateGroup.updateMatrixWorld();
+          _crateTmpV.set(0, RECORD_BASE_Y, tgt.z).applyMatrix4(crateGroup.matrixWorld);
+          _crateEuler.set(tgt.lean, 0, 0);
+          _crateTmpQ.setFromEuler(_crateEuler).premultiply(crateGroup.quaternion);
+          r.position.lerpVectors(_focusFromPos, _crateTmpV, s);
+          _focusLerpQuat.slerpQuaternions(_focusFromQuat, _crateTmpQ, s);
+          r.quaternion.copy(_focusLerpQuat);
+          r.scale.setScalar(_focusFromScale + (1 - _focusFromScale) * s);
+          ud.discOut += (0 - ud.discOut) * k;
+          ud.disc.position.y = 0.16 + ud.discOut;
+          if (crateFocusT >= 1) {
+            crateGroup.attach(r);
+            r.position.set(0, RECORD_BASE_Y, tgt.z);
+            r.rotation.set(tgt.lean, 0, 0);
+            r.scale.setScalar(1);
+            ud.lean = tgt.lean; ud.z = tgt.z; ud.discOut = 0;
+            ud.disc.position.y = 0.16;
+            crateFocusPhase = null;
+            crateFocusT = 0;
+            _showCrateHint('browsing');
+          }
+        }
+      }
+    }
+  }
+
+  _elKeySpace.classList.toggle('active', !!(near.ref && !exhibitOpen && !crateOpen) || exhibitCanFocus || exhibitFocusPhase === 'focused' || crateFocusPhase === 'pulled' || (cratePhase === 'browsing' && !crateFocusPhase));
 
   renderer.render(scene, camera);
   _tickTutPreview();
