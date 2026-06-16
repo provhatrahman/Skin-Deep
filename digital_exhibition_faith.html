@@ -117,6 +117,40 @@
     0%,100% { opacity: 0.6; transform: scale(0.95); }
     50%      { opacity: 1;   transform: scale(1.05); }
   }
+
+  /* ── EXHIBIT AIM RETICLE ── */
+  #aim-reticle {
+    position: fixed;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,200,100,0.4);
+    transform: translate(-50%, -50%);
+    pointer-events: none; z-index: 24;
+    opacity: 0; transition: opacity 0.25s ease;
+    box-shadow: 0 0 4px rgba(255,180,60,0.15);
+  }
+  #aim-reticle::after {
+    content: '';
+    position: absolute; left: 50%; top: 50%;
+    width: 2px; height: 2px; border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(255,220,140,0.5);
+  }
+  #aim-reticle.visible { opacity: 1; }
+  #aim-reticle.locked {
+    border-color: rgba(255,220,140,0.88);
+    box-shadow: 0 0 7px rgba(255,180,60,0.55);
+    animation: aim-lock 0.9s ease-in-out infinite;
+  }
+  #aim-reticle.locked::after {
+    background: rgba(255,220,140,0.95);
+    box-shadow: 0 0 3px rgba(255,180,60,0.75);
+  }
+  @keyframes aim-lock {
+    0%,100% { transform: translate(-50%, -50%) scale(1); }
+    50%      { transform: translate(-50%, -50%) scale(1.1); }
+  }
+
   #tut-overlay {
     position: fixed; inset: 0; z-index: 30; pointer-events: none;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -289,6 +323,7 @@
     opacity: 0; transition: opacity 1.2s ease;
   }
   #minimap-wrap.visible { opacity: 1; }
+  #minimap-wrap.focus-hidden { opacity: 0 !important; transition: opacity 0.35s ease; }
   #minimap {
     display: block;
     border-radius: 50%;
@@ -329,6 +364,7 @@
   <div class="ipr-icon" id="ipr-icon"></div>
   <div class="ipr-pip"></div>
 </div>
+<div id="aim-reticle"></div>
 <div id="tut-guide-dot"><div class="tut-gdot-ring"></div><div class="tut-gdot-ball"></div></div>
 <div id="tut-overlay">
   <div id="tut-card">
@@ -1094,8 +1130,16 @@ const EXHIBIT_W         = 3.6;   // landscape 4:3
 const EXHIBIT_H         = 2.7;
 const FRAME_BORDER      = 0.12;  // world-unit overhang of frame plane beyond image edges
 const EXHIBIT_STAGGER   = [0.0, 0.08, 0.16, 0.24, 0.32, 0.40];
-const EXHIBIT_ORBIT_R   = 4.5;   // radius of the orbit circle
-const EXHIBIT_ORBIT_SPD = 0.04;  // radians/second (one lap ≈ 157 s)
+const EXHIBIT_ORBIT_R    = 4.5;   // radius of the orbit circle
+const EXHIBIT_ORBIT_SPD  = 0.04;  // radians/second (one lap ≈ 157 s)
+const EXHIBIT_FOCUS_DUR  = 0.62;
+const EXHIBIT_FOCUS_CAM_DIST = isMobile ? 1.18 : 1.32; // distance from camera — fills the viewport
+const EXHIBIT_FOCUS_FILL = 0.94;
+const FOG_BASE           = 0.032;
+let exhibitFocusIdx    = -1;
+let exhibitFocusPhase  = null;   // 'focusing' | 'focused' | 'unfocusing'
+let exhibitFocusT      = 0;
+let focusDimT          = 0;
 
 // ══════════════════════════════════════════
 //  INPUT
@@ -1125,6 +1169,7 @@ renderer.domElement.addEventListener('touchstart', e => {
     }
 });
 renderer.domElement.addEventListener('touchmove', e => {
+  if (exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused') return;
   for (const t of e.changedTouches)
     if (t.identifier === tLookId) { yaw -= (t.clientX - tX) * 0.003; tX = t.clientX; }
 });
@@ -1418,9 +1463,150 @@ const near={ref:null,dist:Infinity};
 const _fwd = new THREE.Vector3();
 const _rgt = new THREE.Vector3();
 const _camTarget = new THREE.Vector3();
+const _raycaster = new THREE.Raycaster();
+const _ndcCenter = new THREE.Vector2(0, 0);
+const _panelWp = new THREE.Vector3();
+const _focusFromPos = new THREE.Vector3();
+const _focusToPos = new THREE.Vector3();
+const _focusFromQuat = new THREE.Quaternion();
+const _focusToQuat = new THREE.Quaternion();
+const _focusLerpQuat = new THREE.Quaternion();
+const _focusHelper = new THREE.Object3D();
+const _focusBasis = new THREE.Matrix4();
+const _camLookDir = new THREE.Vector3();
+let _focusFromScale = 1;
+let _focusToScale = 1;
+const _exhibitRayMeshes = [];
+
+function _syncCamera() {
+  const camX = player.position.x - Math.sin(yaw) * 4.6;
+  const camZ = player.position.z - Math.cos(yaw) * 4.6;
+  camera.position.lerp(_camTarget.set(camX, player.position.y + 3.1, camZ), 0.1);
+  camera.lookAt(player.position.x, player.position.y + 1.6, player.position.z);
+  camera.updateMatrixWorld();
+}
+
+function _exhibitPanelAngle(i) {
+  return exhibitAngle + i * (Math.PI * 2 / exhibitPanelN);
+}
+
+function _exhibitFocusScale(panelW, panelH) {
+  const dist = EXHIBIT_FOCUS_CAM_DIST;
+  const vFov = (camera.fov * Math.PI) / 180;
+  const visibleH = 2 * dist * Math.tan(vFov / 2);
+  const visibleW = visibleH * camera.aspect;
+  return Math.min(
+    (visibleW * EXHIBIT_FOCUS_FILL) / panelW,
+    (visibleH * EXHIBIT_FOCUS_FILL) / panelH
+  );
+}
+
+function _computeExhibitFocusTarget(outPos, outQuat, panelW, panelH) {
+  camera.getWorldDirection(_camLookDir);
+  outPos.copy(camera.position).addScaledVector(_camLookDir, EXHIBIT_FOCUS_CAM_DIST);
+  // Same up as the camera; negate right so PlaneGeometry UVs aren't Y-flipped
+  _rgt.setFromMatrixColumn(camera.matrixWorld, 0).negate();
+  _fwd.setFromMatrixColumn(camera.matrixWorld, 1);
+  _panelWp.copy(_camLookDir).negate();
+  _focusBasis.makeBasis(_rgt, _fwd, _panelWp);
+  outQuat.setFromRotationMatrix(_focusBasis);
+  return _exhibitFocusScale(panelW, panelH);
+}
+
+function _applyExhibitFocusView(mesh) {
+  mesh.position.copy(_focusToPos);
+  mesh.quaternion.copy(_focusToQuat);
+  mesh.scale.setScalar(_focusToScale);
+  mesh.renderOrder = 200;
+}
+
+function _captureExhibitFocusFrom(mesh) {
+  mesh.getWorldPosition(_focusFromPos);
+  _focusFromQuat.copy(mesh.quaternion);
+  _focusFromScale = mesh.scale.x;
+}
+
+function _refreshExhibitFocusTarget(mesh) {
+  const geo = mesh.geometry.parameters;
+  _focusToScale = _computeExhibitFocusTarget(_focusToPos, _focusToQuat, geo.width, geo.height);
+}
+
+function _applyExhibitPanelTransform(p, i, orbitAngle) {
+  const a = orbitAngle + i * (Math.PI * 2 / exhibitPanelN);
+  p.mesh.position.x = exhibitCX + Math.sin(a) * EXHIBIT_ORBIT_R;
+  p.mesh.position.y = 2.0;
+  p.mesh.position.z = exhibitCZ + Math.cos(a) * EXHIBIT_ORBIT_R;
+  p.mesh.rotation.y = a + Math.PI;
+}
+
+function _getAimedExhibitPanelIdx() {
+  if (!exhibitPlanes || exhibitPhase !== 'open' || exhibitFocusPhase) return -1;
+
+  // Raycast first when a panel crosses the exact reticle
+  _exhibitRayMeshes.length = 0;
+  exhibitPlanes.forEach(p => {
+    if (p.mesh.visible) _exhibitRayMeshes.push(p.mesh);
+  });
+  if (_exhibitRayMeshes.length) {
+    _raycaster.setFromCamera(_ndcCenter, camera);
+    const hits = _raycaster.intersectObjects(_exhibitRayMeshes, false);
+    if (hits.length) return hits[0].object.userData.exhibitIdx;
+  }
+
+  // Fallback: panel whose screen projection is nearest the centre reticle
+  const cx = window.innerWidth * 0.5;
+  const cy = window.innerHeight * 0.5;
+  let bestIdx = -1;
+  let bestD2 = Infinity;
+  const maxD2 = 110 * 110;
+  exhibitPlanes.forEach((p, i) => {
+    if (!p.mesh.visible) return;
+    p.mesh.getWorldPosition(_panelWp);
+    _panelWp.project(camera);
+    if (_panelWp.z > 1) return;
+    const sx = (_panelWp.x * 0.5 + 0.5) * window.innerWidth;
+    const sy = (-_panelWp.y * 0.5 + 0.5) * window.innerHeight;
+    const dx = sx - cx, dy = sy - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2 && d2 < maxD2) { bestD2 = d2; bestIdx = i; }
+  });
+  return bestIdx;
+}
+
+function _startExhibitFocus(idx) {
+  if (!exhibitPlanes || idx < 0 || exhibitFocusPhase) return;
+  const p = exhibitPlanes[idx];
+  exhibitFocusIdx = idx;
+  exhibitFocusPhase = 'focusing';
+  exhibitFocusT = 0;
+  _captureExhibitFocusFrom(p.mesh);
+}
+
+function _startExhibitUnfocus() {
+  if (exhibitFocusPhase !== 'focused') return;
+  const p = exhibitPlanes[exhibitFocusIdx];
+  _syncCamera();
+  _refreshExhibitFocusTarget(p.mesh);
+  _focusFromPos.copy(_focusToPos);
+  _focusFromQuat.copy(_focusToQuat);
+  _focusFromScale = _focusToScale;
+  exhibitFocusPhase = 'unfocusing';
+  exhibitFocusT = 0;
+}
+
+function _resetExhibitFocus() {
+  exhibitFocusIdx = -1;
+  exhibitFocusPhase = null;
+  exhibitFocusT = 0;
+  focusDimT = 0;
+  if (exhibitPlanes) {
+    exhibitPlanes.forEach(p => { p.mesh.renderOrder = 0; });
+  }
+}
 
 function _openExhibit(ex, px, pz, openYaw) {
   if (exhibitPhase) return;
+  _resetExhibitFocus();
   loadExhibitTextures(); // safety: ensure textures exist if opened before background preload
   // Boost to full resolution for the duration the cards are on screen
   _savedDPR = curDPR;
@@ -1440,6 +1626,7 @@ function _openExhibit(ex, px, pz, openYaw) {
     const geo = new THREE.PlaneGeometry(panelW, panelH);
     const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.exhibitIdx = i;
     mesh.position.set(px + Math.sin(a) * EXHIBIT_ORBIT_R, 2.0, pz + Math.cos(a) * EXHIBIT_ORBIT_R);
     mesh.rotation.y = a + Math.PI;
     mesh.scale.setScalar(0.05);
@@ -1460,6 +1647,7 @@ function _openExhibit(ex, px, pz, openYaw) {
 }
 
 function _closeExhibit() {
+  _resetExhibitFocus();
   if (exhibitPlanes) {
     exhibitPlanes.forEach(p => {
       scene.remove(p.mesh);
@@ -1507,6 +1695,8 @@ const _elPrompt      = document.getElementById('interact-prompt');
 const _elToast       = document.getElementById('toast');
 const _elIprLabel    = document.getElementById('ipr-label');
 const _elIprIcon     = document.getElementById('ipr-icon');
+const _elAimReticle  = document.getElementById('aim-reticle');
+const _elMmWrap      = document.getElementById('minimap-wrap');
 
 function animate() {
   requestAnimationFrame(animate);
@@ -1538,19 +1728,24 @@ function animate() {
   _fwd.set(Math.sin(yaw), 0, Math.cos(yaw));
   _rgt.set(-Math.cos(yaw), 0, Math.sin(yaw));
   let moving = false;
+  const _exhibitLocked = exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused';
 
-  // Arrow keys rotate camera
-  if(keys['ArrowLeft'])  yaw += CAM_TURN * dt;
-  if(keys['ArrowRight']) yaw -= CAM_TURN * dt;
+  // Arrow keys rotate camera — frozen while reading a focused panel
+  if (!_exhibitLocked) {
+    if(keys['ArrowLeft'])  yaw += CAM_TURN * dt;
+    if(keys['ArrowRight']) yaw -= CAM_TURN * dt;
+  }
 
   // WASD moves
-  if(keys['KeyW']) { player.position.addScaledVector(_fwd, SPEED*dt); moving=true; }
-  if(keys['KeyS']) { player.position.addScaledVector(_fwd,-SPEED*dt); moving=true; }
-  if(keys['KeyA']) { player.position.addScaledVector(_rgt,-SPEED*dt); moving=true; }
-  if(keys['KeyD']) { player.position.addScaledVector(_rgt, SPEED*dt); moving=true; }
+  if (!_exhibitLocked) {
+    if(keys['KeyW']) { player.position.addScaledVector(_fwd, SPEED*dt); moving=true; }
+    if(keys['KeyS']) { player.position.addScaledVector(_fwd,-SPEED*dt); moving=true; }
+    if(keys['KeyA']) { player.position.addScaledVector(_rgt,-SPEED*dt); moving=true; }
+    if(keys['KeyD']) { player.position.addScaledVector(_rgt, SPEED*dt); moving=true; }
+  }
 
   // Virtual joystick movement
-  if (_joy.active && (Math.abs(_joy.dx) > 8 || Math.abs(_joy.dy) > 8)) {
+  if (!_exhibitLocked && _joy.active && (Math.abs(_joy.dx) > 8 || Math.abs(_joy.dy) > 8)) {
     player.position.addScaledVector(_rgt,  (_joy.dx / JR) * SPEED * dt);
     player.position.addScaledVector(_fwd, -(_joy.dy / JR) * SPEED * dt);
     moving = true;
@@ -1567,20 +1762,25 @@ function animate() {
   // Room reveal — progress from 0 (dark) to 1 (fully lit) after first interaction
   if (roomRevealed && revealT < 1) revealT = Math.min(1, revealT + dt * 0.32);
   const _rSmooth = revealT * revealT * (3 - 2 * revealT); // smoothstep
-  ambientLight.intensity    = _rSmooth * 0.15;
-  beamLight.intensity       = Math.max(0, 1 - _rSmooth * 2.5) * 6.0;
-  beamCone.material.opacity = Math.max(0, 1 - _rSmooth * 2.5) * 0.045;
+  const _wantFocusDim = exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' ? 1 : 0;
+  focusDimT += (_wantFocusDim - focusDimT) * Math.min(1, dt * 5.5);
+  const _roomLight = _rSmooth * (1 - focusDimT * 0.94);
+  ambientLight.intensity    = _roomLight * 0.15;
+  beamLight.intensity       = Math.max(0, 1 - _rSmooth * 2.5) * 6.0 * (1 - focusDimT);
+  beamCone.material.opacity = Math.max(0, 1 - _rSmooth * 2.5) * 0.045 * (1 - focusDimT);
+  scene.fog.density         = FOG_BASE + focusDimT * 0.11;
 
   // Remaining floater beams fade IN with the reveal
   floaters.forEach((f, i) => {
     if (i === 0 || !f.beam) return;
-    f.beam.intensity = _rSmooth * 6.0;
-    f.beamCone.material.opacity = _rSmooth * 0.045;
+    f.beam.intensity = _roomLight * 6.0;
+    f.beamCone.material.opacity = _roomLight * 0.045;
   });
 
-  orbLight.intensity    = 12.0 + Math.sin(t*2.4)*1.2;
-  fillLight.intensity   = 0.45 + Math.sin(t*1.8+1)*0.06;
-  featherLight.intensity= 0.15 + Math.sin(t*1.3+2)*0.02;
+  const _orbDim = 1 - focusDimT * 0.82;
+  orbLight.intensity    = (12.0 + Math.sin(t*2.4)*1.2) * _orbDim;
+  fillLight.intensity   = (0.45 + Math.sin(t*1.8+1)*0.06) * _orbDim;
+  featherLight.intensity= (0.15 + Math.sin(t*1.3+2)*0.02) * _orbDim;
 
   // Blob shadow follows orb
   blobShadow.position.x = player.position.x;
@@ -1666,7 +1866,14 @@ function animate() {
   // Interact
   const eDown=keys['KeyE']||keys['Space'];
 
-  // Proximity prompt — project above the near object
+  // Camera — sync early so raycasts and screen projections match the rendered view
+  _syncCamera();
+
+  const exhibitAimable = exhibitPhase === 'open' && !exhibitFocusPhase;
+  const exhibitAimedIdx = exhibitAimable ? _getAimedExhibitPanelIdx() : -1;
+  let exhibitCanFocus = exhibitAimedIdx >= 0;
+
+  // Proximity prompt — project above the near object (hidden while exhibit is open)
   if (near.ref && tutStage >= 3 && iCD <= 0 && !exhibitOpen && !_elToast.classList.contains('visible')) {
     const _wp = new THREE.Vector3();
     near.ref.mesh.getWorldPosition(_wp);
@@ -1689,11 +1896,66 @@ function animate() {
   } else {
     _elPrompt.classList.remove('visible');
   }
-  // Dismiss exhibition — priority, no cooldown required
-  if (eDown && !eWas && exhibitPhase === 'open') {
+
+  // Exhibit aim reticle — single small circle at centre, snaps to aimed panel when locked
+  if (exhibitPhase === 'open' && exhibitFocusPhase !== 'focused') {
+    let rx = window.innerWidth * 0.5;
+    let ry = window.innerHeight * 0.5;
+    if (exhibitCanFocus) {
+      const tp = exhibitPlanes[exhibitAimedIdx].mesh;
+      tp.getWorldPosition(_panelWp);
+      _panelWp.project(camera);
+      rx = (_panelWp.x * 0.5 + 0.5) * window.innerWidth;
+      ry = (-_panelWp.y * 0.5 + 0.5) * window.innerHeight;
+    }
+    _elAimReticle.style.left = rx + 'px';
+    _elAimReticle.style.top  = ry + 'px';
+    _elAimReticle.classList.add('visible');
+    _elAimReticle.classList.toggle('locked', exhibitCanFocus);
+    if (exhibitCanFocus) {
+      _elPrompt.style.left = rx + 'px';
+      _elPrompt.style.top  = (ry - 36) + 'px';
+      _elIprLabel.textContent = isMobile ? 'tap to focus' : 'focus';
+      const iconEl = _elIprIcon;
+      if (isMobile) {
+        iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="16" height="16"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="rgba(255,180,60,0.35)"/></svg>`;
+      } else {
+        iconEl.innerHTML = `<span style="font-family:Georgia,serif;font-size:9px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
+      }
+      _elPrompt.classList.add('visible');
+    } else {
+      _elPrompt.classList.remove('visible');
+    }
+  } else if (exhibitFocusPhase === 'focused') {
+    _elAimReticle.classList.remove('visible');
+    _elAimReticle.classList.remove('locked');
+    _elPrompt.style.left = '50%';
+    _elPrompt.style.top  = '62%';
+    _elIprLabel.textContent = isMobile ? 'tap to return' : 'back';
+    _elIprIcon.innerHTML = isMobile
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="16" height="16"><path d="M9 14l-4-4 4-4"/><path d="M5 10h12"/></svg>`
+      : `<span style="font-family:Georgia,serif;font-size:9px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
+    _elPrompt.classList.add('visible');
+  } else {
+    _elAimReticle.classList.remove('visible');
+    _elAimReticle.classList.remove('locked');
+  }
+
+  // Dismiss exhibition — only when orbiting and nothing is aimed
+  if (eDown && !eWas && exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) {
     exhibitPhase = 'closing';
-    exhibitPlanes.forEach(p => { p.mesh.visible = true; });
+    exhibitPlanes.forEach(p => { p.mesh.visible = true; p.mesh.material.opacity = 1; });
     iCD = 0.3;
+  // Focus the panel under the reticle
+  } else if (eDown && !eWas && exhibitCanFocus && iCD <= 0) {
+    _startExhibitFocus(exhibitAimedIdx);
+    _elPrompt.classList.remove('visible');
+    iCD = 0.35;
+  // Return from focused view to the carousel
+  } else if (eDown && !eWas && exhibitFocusPhase === 'focused' && iCD <= 0) {
+    _startExhibitUnfocus();
+    _elPrompt.classList.remove('visible');
+    iCD = 0.35;
   // Normal floater interaction
   } else if(eDown&&!eWas&&near.ref&&iCD<=0){
     const f=near.ref;
@@ -1723,17 +1985,91 @@ function animate() {
 
   // Exhibition animation tick
   if (exhibitPhase) {
-    // Orbit — runs every frame regardless of open/opening/closing phase
-    exhibitAngle += dt * EXHIBIT_ORBIT_SPD;
-    exhibitPlanes.forEach((p, i) => {
-      const a = exhibitAngle + i * (Math.PI * 2 / exhibitPanelN);
-      p.mesh.position.x = exhibitCX + Math.sin(a) * EXHIBIT_ORBIT_R;
-      p.mesh.position.z = exhibitCZ + Math.cos(a) * EXHIBIT_ORBIT_R;
-      p.mesh.rotation.y = a + Math.PI;
-      // hide panels that would appear between or near the camera — widens the visible arc
-      // past the original ±90° to ±109°, showing up to 4 panels at once on desktop
-      if (exhibitPhase === 'open') p.mesh.visible = Math.cos(a - yaw) > -0.6;
-    });
+    _elMmWrap.classList.toggle('focus-hidden', exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused');
+
+    if (!exhibitFocusPhase) exhibitAngle += dt * EXHIBIT_ORBIT_SPD;
+
+    if (exhibitFocusPhase === 'focusing') {
+      const fp = exhibitPlanes[exhibitFocusIdx];
+      _refreshExhibitFocusTarget(fp.mesh);
+      exhibitFocusT = Math.min(1, exhibitFocusT + dt / EXHIBIT_FOCUS_DUR);
+      const s = exhibitFocusT * exhibitFocusT * (3 - 2 * exhibitFocusT);
+      fp.mesh.visible = true;
+      fp.mesh.position.lerpVectors(_focusFromPos, _focusToPos, s);
+      _focusLerpQuat.slerpQuaternions(_focusFromQuat, _focusToQuat, s);
+      fp.mesh.quaternion.copy(_focusLerpQuat);
+      fp.mesh.scale.setScalar(_focusFromScale + (_focusToScale - _focusFromScale) * s);
+      fp.mesh.renderOrder = 200;
+      fp.mesh.material.opacity = 1;
+      fp.mesh.material.transparent = false;
+      exhibitPlanes.forEach((p, i) => {
+        if (i === exhibitFocusIdx) return;
+        p.mesh.material.transparent = true;
+        p.mesh.material.opacity = Math.max(0, 1 - s * 1.2);
+        p.mesh.visible = p.mesh.material.opacity > 0.04;
+      });
+      if (exhibitFocusT >= 1) exhibitFocusPhase = 'focused';
+    } else if (exhibitFocusPhase === 'focused') {
+      const fp = exhibitPlanes[exhibitFocusIdx];
+      _refreshExhibitFocusTarget(fp.mesh);
+      _applyExhibitFocusView(fp.mesh);
+      fp.mesh.visible = true;
+      fp.mesh.material.opacity = 1;
+      fp.mesh.material.transparent = false;
+      exhibitPlanes.forEach((p, i) => {
+        if (i !== exhibitFocusIdx) p.mesh.visible = false;
+      });
+    } else if (exhibitFocusPhase === 'unfocusing') {
+      const tp = exhibitPlanes[exhibitFocusIdx];
+      exhibitFocusT = Math.min(1, exhibitFocusT + dt / EXHIBIT_FOCUS_DUR);
+      const s = exhibitFocusT * exhibitFocusT * (3 - 2 * exhibitFocusT);
+      const a = _exhibitPanelAngle(exhibitFocusIdx);
+      _focusToPos.set(
+        exhibitCX + Math.sin(a) * EXHIBIT_ORBIT_R,
+        2.0,
+        exhibitCZ + Math.cos(a) * EXHIBIT_ORBIT_R
+      );
+      _focusHelper.position.copy(_focusToPos);
+      _focusHelper.rotation.set(0, a + Math.PI, 0);
+      _focusToQuat.copy(_focusHelper.quaternion);
+      tp.mesh.position.lerpVectors(_focusFromPos, _focusToPos, s);
+      _focusLerpQuat.slerpQuaternions(_focusFromQuat, _focusToQuat, s);
+      tp.mesh.quaternion.copy(_focusLerpQuat);
+      tp.mesh.scale.setScalar(_focusFromScale + (1 - _focusFromScale) * s);
+      tp.mesh.renderOrder = Math.round(200 * (1 - s));
+      tp.mesh.visible = true;
+      tp.mesh.material.transparent = false;
+      tp.mesh.material.opacity = 1;
+      exhibitPlanes.forEach((p, i) => {
+        if (i === exhibitFocusIdx) return;
+        p.mesh.material.transparent = true;
+        p.mesh.material.opacity = Math.min(1, s * 1.15);
+        p.mesh.visible = p.mesh.material.opacity > 0.04;
+        _applyExhibitPanelTransform(p, i, exhibitAngle);
+        p.mesh.scale.setScalar(0.05 + s * 0.95);
+      });
+      if (exhibitFocusT >= 1) {
+        tp.mesh.renderOrder = 0;
+        exhibitFocusIdx = -1;
+        exhibitFocusPhase = null;
+        exhibitFocusT = 0;
+        exhibitPlanes.forEach(p => {
+          p.mesh.material.transparent = false;
+          p.mesh.material.opacity = 1;
+          p.mesh.renderOrder = 0;
+        });
+      }
+    } else {
+      exhibitPlanes.forEach((p, i) => {
+        const a = _exhibitPanelAngle(i);
+        p.mesh.position.x = exhibitCX + Math.sin(a) * EXHIBIT_ORBIT_R;
+        p.mesh.position.z = exhibitCZ + Math.cos(a) * EXHIBIT_ORBIT_R;
+        p.mesh.rotation.y = a + Math.PI;
+        p.mesh.material.transparent = false;
+        p.mesh.material.opacity = 1;
+        if (exhibitPhase === 'open') p.mesh.visible = Math.cos(a - yaw) > -0.6;
+      });
+    }
 
     if (exhibitPhase === 'opening') {
       exhibitT = Math.min(1, exhibitT + dt / EXHIBIT_OPEN_DUR);
@@ -1754,13 +2090,7 @@ function animate() {
     }
   }
 
-  _elKeySpace.classList.toggle('active', !!near.ref);
-
-  // Camera
-  const camX=player.position.x-Math.sin(yaw)*4.6;
-  const camZ=player.position.z-Math.cos(yaw)*4.6;
-  camera.position.lerp(_camTarget.set(camX, player.position.y+3.1, camZ), 0.1);
-  camera.lookAt(player.position.x, player.position.y+1.6, player.position.z);
+  _elKeySpace.classList.toggle('active', !!(near.ref && !exhibitOpen) || exhibitCanFocus || exhibitFocusPhase === 'focused');
 
   renderer.render(scene, camera);
   _tickTutPreview();
