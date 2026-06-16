@@ -1441,13 +1441,18 @@ const EXHIBIT_STAGGER   = [0.0, 0.08, 0.16, 0.24, 0.32, 0.40];
 const EXHIBIT_ORBIT_R    = 4.5;   // radius of the orbit circle
 const EXHIBIT_ORBIT_SPD  = 0.04;  // radians/second (one lap ≈ 157 s)
 const EXHIBIT_FOCUS_DUR  = 0.62;
+const EXHIBIT_FOCUS_SWITCH_DUR = 0.48;
 const EXHIBIT_FOCUS_CAM_DIST = isMobile ? 1.18 : 1.32; // distance from camera — fills the viewport
 const EXHIBIT_FOCUS_FILL = 0.94;
 const FOG_BASE           = 0.032;
 let exhibitFocusIdx    = -1;
-let exhibitFocusPhase  = null;   // 'focusing' | 'focused' | 'unfocusing'
+let exhibitFocusPhase  = null;   // 'focusing' | 'focused' | 'switching' | 'unfocusing'
+let exhibitFocusSwitchTo = -1;
 let exhibitFocusT      = 0;
 let focusDimT          = 0;
+let _exhibitNavLWas    = false;
+let _exhibitNavRWas    = false;
+let _exhibitSwipeAcc   = 0;
 
 // ── VINYL CRATE STATE ──
 let crateOpen        = false;
@@ -1509,6 +1514,7 @@ renderer.domElement.addEventListener('touchstart', e => {
       tX = t.clientX; tLookId = t.identifier;
       _tutTX[t.identifier] = t.clientX;
       _crateSwipeAcc = 0;
+      _exhibitSwipeAcc = 0;
     }
 });
 renderer.domElement.addEventListener('touchmove', e => {
@@ -1527,7 +1533,20 @@ renderer.domElement.addEventListener('touchmove', e => {
     }
     return;
   }
-  if (exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused') return;
+  if (exhibitPhase === 'open') {
+    if (exhibitFocusPhase === 'focused') {
+      for (const t of e.changedTouches) {
+        if (t.identifier === tLookId) {
+          _exhibitSwipeAcc += (t.clientX - tX);
+          tX = t.clientX;
+          if (_exhibitSwipeAcc < -55) { _exhibitFocusStep(1); _exhibitSwipeAcc = 0; }
+          else if (_exhibitSwipeAcc > 55) { _exhibitFocusStep(-1); _exhibitSwipeAcc = 0; }
+        }
+      }
+      return;
+    }
+    if (exhibitFocusPhase) return;
+  }
   for (const t of e.changedTouches)
     if (t.identifier === tLookId) { yaw -= (t.clientX - tX) * 0.003; tX = t.clientX; }
 });
@@ -1834,6 +1853,12 @@ const _focusBasis = new THREE.Matrix4();
 const _camLookDir = new THREE.Vector3();
 let _focusFromScale = 1;
 let _focusToScale = 1;
+const _slideCenterPos = new THREE.Vector3();
+const _slideCenterQuat = new THREE.Quaternion();
+const _slideToQuat = new THREE.Quaternion();
+const _slideOff = new THREE.Vector3();
+let _slideFromScale = 1;
+let _slideToScale = 1;
 const _exhibitRayMeshes = [];
 
 function _syncCamera() {
@@ -1906,21 +1931,44 @@ function _exhibitStep(dir) {
   exhibitAngle += dir * (Math.PI * 2 / exhibitPanelN);
 }
 
+function _exhibitFocusStep(dir) {
+  if (!exhibitPlanes || exhibitFocusPhase !== 'focused' || exhibitPanelN < 2) return;
+  const toIdx = (exhibitFocusIdx + dir + exhibitPanelN) % exhibitPanelN;
+  exhibitFocusSwitchTo = toIdx;
+  exhibitFocusPhase = 'switching';
+  exhibitFocusT = 0;
+  exhibitAngle += dir * (Math.PI * 2 / exhibitPanelN);
+
+  const fromMesh = exhibitPlanes[exhibitFocusIdx].mesh;
+  const toMesh = exhibitPlanes[toIdx].mesh;
+  _syncCamera();
+  const fromGeo = fromMesh.geometry.parameters;
+  _computeExhibitFocusTarget(_slideCenterPos, _slideCenterQuat, fromGeo.width, fromGeo.height);
+  _slideFromScale = fromMesh.scale.x;
+  const toGeo = toMesh.geometry.parameters;
+  _slideToScale = _exhibitFocusScale(toGeo.width, toGeo.height);
+  _slideToQuat.copy(_slideCenterQuat);
+  _rgt.setFromMatrixColumn(camera.matrixWorld, 0);
+  _slideOff.copy(_rgt).multiplyScalar(2.6 * dir);
+
+  fromMesh.visible = true;
+  toMesh.visible = true;
+  fromMesh.renderOrder = 200;
+  toMesh.renderOrder = 201;
+  exhibitPlanes.forEach((p, i) => {
+    if (i !== exhibitFocusIdx && i !== toIdx) p.mesh.visible = false;
+  });
+}
+
 function _hideExhibitNav() {
   _elExhibitPrev?.classList.remove('visible');
   _elExhibitNext?.classList.remove('visible');
 }
 
 function _showExhibitHint() {
-  if (exhibitPanelN < 2) {
-    _elFocusEscapeHint.innerHTML = isMobile
-      ? `<span class="feh-label">tap to focus</span>`
-      : `<span class="feh-key">spc</span><span class="feh-label">focus</span><span class="feh-key">spc</span><span class="feh-label">close</span>`;
-  } else {
-    _elFocusEscapeHint.innerHTML = isMobile
-      ? `<span class="feh-label">use arrows to browse</span><span class="feh-label" style="opacity:0.4">&middot;</span><span class="feh-label">tap to focus</span>`
-      : `<span class="feh-label">use arrows to browse</span><span class="feh-key">spc</span><span class="feh-label">focus</span><span class="feh-key">spc</span><span class="feh-label">close</span>`;
-  }
+  _elFocusEscapeHint.innerHTML = isMobile
+    ? `<span class="feh-label">tap to focus</span>`
+    : `<span class="feh-key">spc</span><span class="feh-label">focus</span><span class="feh-key">spc</span><span class="feh-label">close</span>`;
   _elFocusEscapeHint.classList.remove('dim');
   _elFocusEscapeHint.classList.add('visible');
   clearTimeout(_focusEscapeTimer);
@@ -1928,6 +1976,8 @@ function _showExhibitHint() {
   if (exhibitPanelN >= 2) {
     _elExhibitPrev?.classList.add('visible');
     _elExhibitNext?.classList.add('visible');
+  } else {
+    _hideExhibitNav();
   }
 }
 
@@ -1970,15 +2020,17 @@ function _startExhibitFocus(idx) {
   const p = exhibitPlanes[idx];
   exhibitFocusIdx = idx;
   exhibitFocusPhase = 'focusing';
+  exhibitFocusSwitchTo = -1;
   exhibitFocusT = 0;
-  _hideExhibitNav();
   _hideFocusEscapeHint();
+  _hideExhibitNav();
   _captureExhibitFocusFrom(p.mesh);
 }
 
 function _startExhibitUnfocus() {
   if (exhibitFocusPhase !== 'focused') return;
   _hideFocusEscapeHint();
+  _hideExhibitNav();
   const p = exhibitPlanes[exhibitFocusIdx];
   _syncCamera();
   _refreshExhibitFocusTarget(p.mesh);
@@ -1993,6 +2045,7 @@ function _resetExhibitFocus() {
   _hideFocusEscapeHint();
   exhibitFocusIdx = -1;
   exhibitFocusPhase = null;
+  exhibitFocusSwitchTo = -1;
   exhibitFocusT = 0;
   focusDimT = 0;
   if (exhibitPlanes) {
@@ -2301,9 +2354,17 @@ const _elExhibitNext      = document.getElementById('exhibit-next');
 let   _focusEscapeTimer   = null;
 
 function _showFocusEscapeHint() {
-  _elFocusEscapeHint.innerHTML = isMobile
-    ? `<span class="feh-label">tap to return</span>`
-    : `<span class="feh-key">spc</span><span class="feh-label">back</span>`;
+  if (exhibitPanelN >= 2) {
+    _elFocusEscapeHint.innerHTML = isMobile
+      ? `<span class="feh-label">swipe or use arrows to browse</span><span class="feh-label" style="opacity:0.4">&middot;</span><span class="feh-label">tap to return</span>`
+      : `<span class="feh-label">use arrows to browse</span><span class="feh-key">spc</span><span class="feh-label">back</span>`;
+    _elExhibitPrev?.classList.add('visible');
+    _elExhibitNext?.classList.add('visible');
+  } else {
+    _elFocusEscapeHint.innerHTML = isMobile
+      ? `<span class="feh-label">tap to return</span>`
+      : `<span class="feh-key">spc</span><span class="feh-label">back</span>`;
+  }
   _elFocusEscapeHint.classList.remove('dim');
   _elFocusEscapeHint.classList.add('visible');
   clearTimeout(_focusEscapeTimer);
@@ -2338,16 +2399,20 @@ if (_elCrateBack) {
 }
 
 const _exhibitNavFire = (dir, e) => {
-  e.preventDefault(); e.stopPropagation();
-  _exhibitStep(dir);
+  e.preventDefault();
+  e.stopPropagation();
+  if (exhibitFocusPhase === 'focused') _exhibitFocusStep(dir);
+  else if (exhibitPhase === 'open' && !exhibitFocusPhase) _exhibitStep(dir);
 };
 if (_elExhibitPrev) {
   _elExhibitPrev.addEventListener('click', e => _exhibitNavFire(-1, e));
   _elExhibitPrev.addEventListener('touchstart', e => _exhibitNavFire(-1, e), { passive: false });
+  _elExhibitPrev.addEventListener('touchmove', e => { e.stopPropagation(); }, { passive: false });
 }
 if (_elExhibitNext) {
   _elExhibitNext.addEventListener('click', e => _exhibitNavFire(1, e));
   _elExhibitNext.addEventListener('touchstart', e => _exhibitNavFire(1, e), { passive: false });
+  _elExhibitNext.addEventListener('touchmove', e => { e.stopPropagation(); }, { passive: false });
 }
 
 function animate() {
@@ -2380,7 +2445,7 @@ function animate() {
   _fwd.set(Math.sin(yaw), 0, Math.cos(yaw));
   _rgt.set(-Math.cos(yaw), 0, Math.sin(yaw));
   let moving = false;
-  const _exhibitLocked = exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused';
+  const _exhibitLocked = exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' || exhibitFocusPhase === 'switching';
   // The crate is a focused interaction — freeze movement and turning while it is open.
   const _inputLocked = _exhibitLocked || crateOpen;
 
@@ -2416,7 +2481,7 @@ function animate() {
   // Room reveal — progress from 0 (dark) to 1 (fully lit) after first interaction
   if (roomRevealed && revealT < 1) revealT = Math.min(1, revealT + dt * 0.32);
   const _rSmooth = revealT * revealT * (3 - 2 * revealT); // smoothstep
-  const _wantFocusDim = exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' ? 1 : 0;
+  const _wantFocusDim = exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' || exhibitFocusPhase === 'switching' ? 1 : 0;
   focusDimT += (_wantFocusDim - focusDimT) * Math.min(1, dt * 5.5);
   const _roomLight = _rSmooth * (1 - focusDimT * 0.94);
   ambientLight.intensity    = _roomLight * 0.15;
@@ -2552,7 +2617,7 @@ function animate() {
   }
 
   // Exhibit aim reticle — only visible when the aim is locked onto a panel
-  if (exhibitPhase === 'open' && exhibitFocusPhase !== 'focused') {
+  if (exhibitPhase === 'open' && !exhibitFocusPhase) {
     if (exhibitCanFocus) {
       const tp = exhibitPlanes[exhibitAimedIdx].mesh;
       tp.getWorldPosition(_panelWp);
@@ -2578,10 +2643,6 @@ function animate() {
       _elAimReticle.classList.remove('locked');
       _elPrompt.classList.remove('visible');
     }
-  } else if (exhibitFocusPhase === 'focused') {
-    _elAimReticle.classList.remove('visible');
-    _elAimReticle.classList.remove('locked');
-    _elPrompt.classList.remove('visible');
   } else {
     _elAimReticle.classList.remove('visible');
     _elAimReticle.classList.remove('locked');
@@ -2596,6 +2657,17 @@ function animate() {
     _crateNavLWas = navL; _crateNavRWas = navR;
   } else {
     _crateNavLWas = false; _crateNavRWas = false;
+  }
+
+  // ── EXHIBIT FOCUSED SLIDESHOW (arrows / WASD only while an image is in focus) ──
+  if (exhibitFocusPhase === 'focused' && exhibitPanelN >= 2 && iCD <= 0) {
+    const navL = keys['ArrowLeft'] || keys['KeyA'];
+    const navR = keys['ArrowRight'] || keys['KeyD'];
+    if (navL && !_exhibitNavLWas) { _exhibitFocusStep(-1); iCD = 0.28; }
+    if (navR && !_exhibitNavRWas) { _exhibitFocusStep(1); iCD = 0.28; }
+    _exhibitNavLWas = navL; _exhibitNavRWas = navR;
+  } else {
+    _exhibitNavLWas = false; _exhibitNavRWas = false;
   }
 
   // ── CRATE BACK / CLOSE (Esc or B, or on-screen button) ──
@@ -2665,7 +2737,7 @@ function animate() {
 
   // Exhibition animation tick
   if (exhibitPhase) {
-    _elMmWrap.classList.toggle('focus-hidden', exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused');
+    _elMmWrap.classList.toggle('focus-hidden', exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' || exhibitFocusPhase === 'switching');
 
     if (!exhibitFocusPhase) exhibitAngle += dt * EXHIBIT_ORBIT_SPD;
 
@@ -2689,6 +2761,39 @@ function animate() {
         p.mesh.visible = p.mesh.material.opacity > 0.04;
       });
       if (exhibitFocusT >= 1) { exhibitFocusPhase = 'focused'; _showFocusEscapeHint(); }
+    } else if (exhibitFocusPhase === 'switching') {
+      const fromMesh = exhibitPlanes[exhibitFocusIdx].mesh;
+      const toMesh = exhibitPlanes[exhibitFocusSwitchTo].mesh;
+      exhibitFocusT = Math.min(1, exhibitFocusT + dt / EXHIBIT_FOCUS_SWITCH_DUR);
+      const s = exhibitFocusT * exhibitFocusT * (3 - 2 * exhibitFocusT);
+
+      fromMesh.position.copy(_slideCenterPos).addScaledVector(_slideOff, -s);
+      fromMesh.quaternion.copy(_slideCenterQuat);
+      fromMesh.scale.setScalar(_slideFromScale);
+      fromMesh.visible = true;
+      fromMesh.renderOrder = 200;
+
+      toMesh.position.copy(_slideCenterPos).addScaledVector(_slideOff, 1 - s);
+      toMesh.quaternion.copy(_slideToQuat);
+      toMesh.scale.setScalar(_slideToScale);
+      toMesh.visible = true;
+      toMesh.renderOrder = 201;
+      toMesh.material.opacity = 1;
+      toMesh.material.transparent = false;
+
+      if (exhibitFocusT >= 1) {
+        exhibitFocusIdx = exhibitFocusSwitchTo;
+        exhibitFocusPhase = 'focused';
+        exhibitFocusSwitchTo = -1;
+        exhibitFocusT = 0;
+        _refreshExhibitFocusTarget(toMesh);
+        _applyExhibitFocusView(toMesh);
+        fromMesh.visible = false;
+        exhibitPlanes.forEach((p, i) => {
+          if (i !== exhibitFocusIdx) p.mesh.visible = false;
+        });
+        _showFocusEscapeHint();
+      }
     } else if (exhibitFocusPhase === 'focused') {
       const fp = exhibitPlanes[exhibitFocusIdx];
       _refreshExhibitFocusTarget(fp.mesh);
