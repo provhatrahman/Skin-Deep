@@ -186,6 +186,28 @@
   @media (pointer: coarse) {
     #crate-back-btn { backdrop-filter: none; -webkit-backdrop-filter: none; }
   }
+
+  /* ── EXHIBIT CAROUSEL NAV (mobile) ── */
+  .exhibit-nav-btn {
+    position: fixed; top: 50%; z-index: 26;
+    width: 44px; height: 44px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(255,220,140,0.9);
+    background: rgba(4,2,0,0.72);
+    border: 1px solid rgba(255,200,100,0.3);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.8), 0 0 14px rgba(255,180,60,0.18), inset 0 1px 0 rgba(255,200,100,0.08);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    cursor: pointer; opacity: 0; pointer-events: none;
+    transform: translateY(-50%);
+    transition: opacity 0.3s ease, transform 0.12s ease;
+  }
+  .exhibit-nav-btn.visible { opacity: 1; pointer-events: auto; }
+  .exhibit-nav-btn:active { transform: translateY(-50%) scale(0.92); }
+  #exhibit-prev { left: 16px; }
+  #exhibit-next { right: 16px; }
+  @media (pointer: coarse) {
+    .exhibit-nav-btn { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  }
   .feh-key {
     font-family: Georgia, serif; font-size: 9px; letter-spacing: 0.08em;
     color: rgba(255,220,140,0.9); padding: 2px 7px;
@@ -419,6 +441,12 @@
 <div id="focus-escape-hint"></div>
 <button id="crate-back-btn" aria-label="back">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 18l-6-6 6-6"/></svg>
+</button>
+<button id="exhibit-prev" class="exhibit-nav-btn" aria-label="previous image">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 18l-6-6 6-6"/></svg>
+</button>
+<button id="exhibit-next" class="exhibit-nav-btn" aria-label="next image">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M9 18l6-6-6-6"/></svg>
 </button>
 <div id="tut-guide-dot"><div class="tut-gdot-ring"></div><div class="tut-gdot-ball"></div></div>
 <div id="tut-overlay">
@@ -1873,6 +1901,36 @@ function _applyExhibitPanelTransform(p, i, orbitAngle) {
   p.mesh.rotation.set(0, a + Math.PI, 0);
 }
 
+function _exhibitStep(dir) {
+  if (!exhibitPlanes || exhibitPhase !== 'open' || exhibitFocusPhase || exhibitPanelN < 2) return;
+  exhibitAngle += dir * (Math.PI * 2 / exhibitPanelN);
+}
+
+function _hideExhibitNav() {
+  _elExhibitPrev?.classList.remove('visible');
+  _elExhibitNext?.classList.remove('visible');
+}
+
+function _showExhibitHint() {
+  if (exhibitPanelN < 2) {
+    _elFocusEscapeHint.innerHTML = isMobile
+      ? `<span class="feh-label">tap to focus</span>`
+      : `<span class="feh-key">spc</span><span class="feh-label">focus</span><span class="feh-key">spc</span><span class="feh-label">close</span>`;
+  } else {
+    _elFocusEscapeHint.innerHTML = isMobile
+      ? `<span class="feh-label">use arrows to browse</span><span class="feh-label" style="opacity:0.4">&middot;</span><span class="feh-label">tap to focus</span>`
+      : `<span class="feh-label">use arrows to browse</span><span class="feh-key">spc</span><span class="feh-label">focus</span><span class="feh-key">spc</span><span class="feh-label">close</span>`;
+  }
+  _elFocusEscapeHint.classList.remove('dim');
+  _elFocusEscapeHint.classList.add('visible');
+  clearTimeout(_focusEscapeTimer);
+  _focusEscapeTimer = setTimeout(() => _elFocusEscapeHint.classList.add('dim'), 3200);
+  if (exhibitPanelN >= 2) {
+    _elExhibitPrev?.classList.add('visible');
+    _elExhibitNext?.classList.add('visible');
+  }
+}
+
 function _getAimedExhibitPanelIdx() {
   if (!exhibitPlanes || exhibitPhase !== 'open' || exhibitFocusPhase) return -1;
 
@@ -1913,6 +1971,8 @@ function _startExhibitFocus(idx) {
   exhibitFocusIdx = idx;
   exhibitFocusPhase = 'focusing';
   exhibitFocusT = 0;
+  _hideExhibitNav();
+  _hideFocusEscapeHint();
   _captureExhibitFocusFrom(p.mesh);
 }
 
@@ -1984,6 +2044,8 @@ function _openExhibit(ex, px, pz, openYaw) {
 
 function _closeExhibit() {
   _resetExhibitFocus();
+  _hideExhibitNav();
+  _hideFocusEscapeHint();
   if (exhibitPlanes) {
     exhibitPlanes.forEach(p => {
       scene.remove(p.mesh);
@@ -2234,6 +2296,8 @@ const _elAimReticle  = document.getElementById('aim-reticle');
 const _elMmWrap           = document.getElementById('minimap-wrap');
 const _elFocusEscapeHint  = document.getElementById('focus-escape-hint');
 const _elCrateBack        = document.getElementById('crate-back-btn');
+const _elExhibitPrev      = document.getElementById('exhibit-prev');
+const _elExhibitNext      = document.getElementById('exhibit-next');
 let   _focusEscapeTimer   = null;
 
 function _showFocusEscapeHint() {
@@ -2271,6 +2335,19 @@ if (_elCrateBack) {
   const _crateBackFire = e => { e.preventDefault(); e.stopPropagation(); _crateBackRequested = true; };
   _elCrateBack.addEventListener('click', _crateBackFire);
   _elCrateBack.addEventListener('touchstart', _crateBackFire, { passive: false });
+}
+
+const _exhibitNavFire = (dir, e) => {
+  e.preventDefault(); e.stopPropagation();
+  _exhibitStep(dir);
+};
+if (_elExhibitPrev) {
+  _elExhibitPrev.addEventListener('click', e => _exhibitNavFire(-1, e));
+  _elExhibitPrev.addEventListener('touchstart', e => _exhibitNavFire(-1, e), { passive: false });
+}
+if (_elExhibitNext) {
+  _elExhibitNext.addEventListener('click', e => _exhibitNavFire(1, e));
+  _elExhibitNext.addEventListener('touchstart', e => _exhibitNavFire(1, e), { passive: false });
 }
 
 function animate() {
@@ -2541,6 +2618,8 @@ function animate() {
   // Dismiss exhibition — only when orbiting and nothing is aimed
   } else if (eDown && !eWas && exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) {
     exhibitPhase = 'closing';
+    _hideExhibitNav();
+    _hideFocusEscapeHint();
     exhibitPlanes.forEach(p => { p.mesh.visible = true; p.mesh.material.opacity = 1; });
     iCD = 0.3;
   // Focus the panel under the reticle
@@ -2659,6 +2738,7 @@ function animate() {
           p.mesh.material.opacity = 1;
           p.mesh.renderOrder = 0;
         });
+        _showExhibitHint();
       }
     } else {
       exhibitPlanes.forEach((p, i) => {
@@ -2685,7 +2765,10 @@ function animate() {
         const s       = lt * lt * (3 - 2 * lt);
         p.mesh.scale.setScalar(0.05 + s * 0.95);
       });
-      if (exhibitT >= 1) exhibitPhase = 'open';
+      if (exhibitT >= 1) {
+        exhibitPhase = 'open';
+        _showExhibitHint();
+      }
     } else if (exhibitPhase === 'closing') {
       exhibitT = Math.max(0, exhibitT - dt / EXHIBIT_CLOSE_DUR);
       const s = exhibitT * exhibitT * (3 - 2 * exhibitT);
