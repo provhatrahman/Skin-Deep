@@ -1,0 +1,24 @@
+- generic [active] [ref=e1]:
+  - generic:
+    - generic:
+      - generic:
+        - generic: W
+      - generic:
+        - generic: A
+        - generic: S
+        - generic: D
+    - generic: space
+    - generic:
+      - generic:
+        - generic: ←
+        - generic: →
+  - generic:
+    - generic:
+      - generic: Step 1 of 5
+      - generic: Press → to rotate your view
+      - generic:
+        - generic:
+          - img
+          - generic: →
+  - generic:
+    - generic: map

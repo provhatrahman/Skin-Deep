@@ -433,9 +433,11 @@ function makeFloaterTex(type) {
 
 function makeExhibitFrameTex() {
   const W = 512, H = 384;
+  const SS = 2; // supersample: draw at 2x so borders stay crisp at full DPR
   const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
+  cv.width = W * SS; cv.height = H * SS;
   const ctx = cv.getContext('2d');
+  ctx.scale(SS, SS);
   const FW = 16; // frame border thickness in pixels (matches FRAME_BORDER world units)
 
   // Dark warm backing for the frame border region
@@ -483,9 +485,11 @@ function makeExhibitFrameTex() {
 
 function makePhotographerCardTex() {
   const W = 512, H = 384;
+  const SS = 2; // supersample: draw at 2x so text stays crisp at full DPR
   const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
+  cv.width = W * SS; cv.height = H * SS;
   const ctx = cv.getContext('2d');
+  ctx.scale(SS, SS);
 
   // Background
   ctx.fillStyle = 'rgb(4,2,1)';
@@ -573,13 +577,32 @@ function makePhotographerCardTex() {
 }
 
 const _texLoader = new THREE.TextureLoader();
-const exhibitTextures = [
+const _exhibitPaths = [
   'images/alim-ZLwk24PZFO8-unsplash.jpg',
   'images/alim-4heeT54_4U0-unsplash.jpg',
   'images/alim-xO4ul401gSQ-unsplash.jpg',
   'images/alim-jiW2VlctJk0-unsplash.jpg',
   'images/alim-V1Ii_Nq1k8o-unsplash.jpg',
-].map(path => _texLoader.load(path));
+];
+// Photos are viewed near head-on, so skip mipmaps (no generation cost / memory) and
+// clamp wrapping — makes the now-NPOT images valid in WebGL1 without a runtime POT resize.
+function _configExhibitTex(tex) {
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+// Lazy-loaded: populated on first exhibit open (or background-preloaded after room reveal)
+const exhibitTextures = new Array(_exhibitPaths.length).fill(null);
+let _exhibitLoadStarted = false;
+function loadExhibitTextures() {
+  if (_exhibitLoadStarted) return;
+  _exhibitLoadStarted = true;
+  _exhibitPaths.forEach((path, i) => {
+    exhibitTextures[i] = _configExhibitTex(_texLoader.load(path));
+  });
+}
 const _exhibitFrameTex    = makeExhibitFrameTex();
 const _photographerCardTex = makePhotographerCardTex();
 
@@ -592,12 +615,24 @@ scene.fog = new THREE.FogExp2(0x000000, 0.032);
 
 const isMobile = window.matchMedia('(pointer: coarse)').matches;
 const renderer = new THREE.WebGLRenderer({ antialias: !isMobile });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.0 : 2));
+// Adaptive resolution scaling — DPR is tuned at runtime to hold ~60fps (see animate()).
+// Start mobile mid-range so the first second isn't blurry, then climb toward MAX_DPR.
+const MIN_DPR = 1.0;
+const MAX_DPR = Math.min(window.devicePixelRatio, isMobile ? 2.0 : 2);
+let curDPR = isMobile ? Math.min(1.5, MAX_DPR) : MAX_DPR;
+// While an exhibit card is open the viewer studies the photos head-on, so we push
+// the framebuffer to full resolution and pause the adaptive downscaler (see animate()).
+const EXHIBIT_DPR = MAX_DPR;
+let _savedDPR = curDPR;
+renderer.setPixelRatio(curDPR);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = false;
 renderer.toneMapping = isMobile ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
 if (!isMobile) renderer.toneMappingExposure = 1.15;
 document.body.appendChild(renderer.domElement);
+
+// Cap anisotropy: sharpens the tiled floor at grazing angles without the full cost on mobile
+const MAX_ANISO = Math.min(renderer.capabilities.getMaxAnisotropy(), isMobile ? 4 : 8);
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth/window.innerHeight, 0.1, 80);
 
@@ -605,6 +640,10 @@ const camera = new THREE.PerspectiveCamera(65, window.innerWidth/window.innerHei
 const floorTex = new THREE.TextureLoader().load('tile.png');
 floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
 floorTex.repeat.set(4.5, 4.5);
+floorTex.generateMipmaps = true;
+floorTex.minFilter = THREE.LinearMipmapLinearFilter;
+floorTex.magFilter = THREE.LinearFilter;
+floorTex.anisotropy = MAX_ANISO;
 const floor = new THREE.Mesh(
   new THREE.PlaneGeometry(38, 38),
   new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.85, metalness: 0.05, color: 0x222222 })
@@ -616,6 +655,10 @@ scene.add(floor);
 const wallTex = new THREE.TextureLoader().load('tile.png');
 wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping;
 wallTex.repeat.set(3.8, 3);
+wallTex.generateMipmaps = true;
+wallTex.minFilter = THREE.LinearMipmapLinearFilter;
+wallTex.magFilter = THREE.LinearFilter;
+wallTex.anisotropy = MAX_ANISO;
 const roomMat = new THREE.MeshStandardMaterial({
   map: wallTex, roughness: 0.85, metalness: 0.05,
   color: 0x666666, side: THREE.FrontSide,
@@ -759,14 +802,17 @@ const floaterData = [
 
 const floaters = [];
 floaterData.forEach(fd => {
-  // Main mesh — clearcoat + procedural emissive texture
+  // Main mesh — procedural emissive texture. Mobile drops the clearcoat layer
+  // (MeshStandardMaterial) to roughly halve the per-pixel BRDF cost.
   const fTex = makeFloaterTex(fd.tex);
-  const mesh = new THREE.Mesh(fd.geo, new THREE.MeshPhysicalMaterial({
+  const _matOpts = {
     color:fd.color, emissive:fd.em, emissiveIntensity:1.4,
     emissiveMap: fTex,
-    roughness:0.12, metalness:0.55,
-    clearcoat:0.45, clearcoatRoughness:0.15
-  }));
+    roughness:0.12, metalness:0.55
+  };
+  const mesh = new THREE.Mesh(fd.geo, isMobile
+    ? new THREE.MeshStandardMaterial(_matOpts)
+    : new THREE.MeshPhysicalMaterial(Object.assign(_matOpts, { clearcoat:0.45, clearcoatRoughness:0.15 })));
   mesh.position.set(...fd.pos);
   scene.add(mesh);
 
@@ -806,12 +852,29 @@ floaterData.forEach(fd => {
   fShadow.renderOrder = 2;
   scene.add(fShadow);
 
-  const fl = new THREE.PointLight(fd.color, 0.9, 4.5, 2);
-  fl.position.copy(mesh.position);
-  scene.add(fl);
+  // Desktop: one dedicated point light per floater. Mobile: skipped here — a small
+  // shared pool (created below) lights only the nearest few floaters instead.
+  let fl = null;
+  if (!isMobile) {
+    fl = new THREE.PointLight(fd.color, 0.9, 4.5, 2);
+    fl.position.copy(mesh.position);
+    scene.add(fl);
+  }
 
-  floaters.push({ mesh, aura, ring, fShadow, light:fl, message:fd.msg, baseY:fd.pos[1], phase:Math.random()*Math.PI*2, rotSpeed:(Math.random()-0.5)*0.02+0.015 });
+  floaters.push({ mesh, aura, ring, fShadow, light:fl, color:fd.color, message:fd.msg, baseY:fd.pos[1], phase:Math.random()*Math.PI*2, rotSpeed:(Math.random()-0.5)*0.02+0.015 });
 });
+
+// Mobile shared point-light pool — repositioned each frame to the nearest floaters,
+// so we pay for 3 dynamic lights instead of 9 regardless of how many objects exist.
+const MOBILE_LIGHT_POOL = 3;
+const _mobileLights = [];
+if (isMobile) {
+  for (let i = 0; i < MOBILE_LIGHT_POOL; i++) {
+    const pl = new THREE.PointLight(0xffffff, 0, 4.5, 2);
+    scene.add(pl);
+    _mobileLights.push(pl);
+  }
+}
 
 // ── DARK ROOM INITIAL STATE ──
 // All floaters start invisible; the beam + reveal animation will bring them in
@@ -819,7 +882,7 @@ floaters.forEach(f => {
   f.mesh.material.emissiveIntensity = 0;
   f.aura.material.opacity = 0;
   f.ring.material.opacity = 0;
-  f.light.intensity = 0;
+  if (f.light) f.light.intensity = 0;
 });
 
 // ── BEAM OF LIGHT on first floater (octahedron) ──
@@ -843,8 +906,10 @@ beamCone.position.set(0, 4.5, 4);  // midpoint between source (y=9) and floor (y
 scene.add(beamCone);
 
 // ── BEAMS OF LIGHT on remaining floaters (fade in after room reveals) ──
+// Desktop only — 8 extra spotlights are the heaviest per-pixel cost. On mobile the
+// single floater-0 beam plus emissive glow carries the look.
 floaters.forEach((f, i) => {
-  if (i === 0) return; // first floater's beam already created above
+  if (i === 0 || isMobile) return; // first floater's beam already created above
   const px = floaterData[i].pos[0], pz = floaterData[i].pos[2];
   const col = floaterData[i].color;
   const bl = new THREE.SpotLight(col, 0, 18, Math.PI / 11, 0.25, 1.5);
@@ -1210,6 +1275,11 @@ const _camTarget = new THREE.Vector3();
 
 function _openExhibit(px, pz, openYaw) {
   if (exhibitPhase) return;
+  loadExhibitTextures(); // safety: ensure textures exist if opened before background preload
+  // Boost to full resolution for the duration the cards are on screen
+  _savedDPR = curDPR;
+  curDPR = EXHIBIT_DPR;
+  _applyDPR();
   exhibitOpen  = true;
   exhibitPhase = 'opening';
   exhibitT     = 0;
@@ -1253,6 +1323,9 @@ function _closeExhibit() {
     });
     exhibitPlanes = null;
   }
+  // Restore the pre-exhibit resolution; the adaptive loop re-tunes from here
+  curDPR = _savedDPR;
+  _applyDPR();
   exhibitOpen  = false;
   exhibitPhase = null;
   exhibitT     = 0;
@@ -1265,6 +1338,18 @@ const _MOBILE_TARGET = 1 / 60;
 // Per-frame counters for throttled subsystems
 let _moteFrame = 0;
 let _mmFrame   = 0;
+
+// ── ADAPTIVE RESOLUTION SCALING ──
+// Measures the interval between processed frames and nudges the render DPR up/down
+// to stay at ~60fps: lower fast when we drop frames, raise gently when steady.
+let _lastFrameTs = performance.now();
+let _emaFrameMs  = 1000 / 60;
+let _drsFrame    = 0;
+const _DRS_INTERVAL = 30; // evaluate ~twice per second
+function _applyDPR() {
+  renderer.setPixelRatio(curDPR);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
 
 // (tutorial handles initial guidance)
 
@@ -1286,6 +1371,21 @@ function animate() {
   const dt = Math.min(isMobile ? _mobileAcc : rawDt, 0.05);
   if (isMobile) _mobileAcc = 0;
   const t  = clock.elapsedTime;
+
+  // Adaptive resolution: track the processed-frame interval and retune DPR periodically.
+  const _nowTs = performance.now();
+  _emaFrameMs = _emaFrameMs * 0.9 + (_nowTs - _lastFrameTs) * 0.1;
+  _lastFrameTs = _nowTs;
+  // Paused while an exhibit is open so an FPS dip can't claw back card resolution
+  if (!exhibitPhase && ++_drsFrame >= _DRS_INTERVAL) {
+    _drsFrame = 0;
+    const fps = 1000 / _emaFrameMs;
+    if (fps < 54 && curDPR > MIN_DPR) {            // dropping frames — back off resolution fast
+      curDPR = Math.max(MIN_DPR, curDPR - 0.2); _applyDPR();
+    } else if (fps > 58.5 && curDPR < MAX_DPR) {   // steady 60 — climb toward max gently
+      curDPR = Math.min(MAX_DPR, curDPR + 0.1); _applyDPR();
+    }
+  }
 
   _fwd.set(Math.sin(yaw), 0, Math.cos(yaw));
   _rgt.set(-Math.cos(yaw), 0, Math.sin(yaw));
@@ -1366,7 +1466,7 @@ function animate() {
     f.mesh.position.y = f.baseY + floatY;
     f.mesh.rotation.x += f.rotSpeed;
     f.mesh.rotation.y += f.rotSpeed*1.4;
-    f.light.position.copy(f.mesh.position);
+    if (f.light) f.light.position.copy(f.mesh.position);
 
     // Aura tracks main mesh exactly
     f.aura.position.copy(f.mesh.position);
@@ -1389,12 +1489,31 @@ function animate() {
     f.mesh.material.emissiveIntensity = (1.4 + prox * 3.2) * _rSmooth;
     f.aura.material.opacity = (0.07 + prox * 0.15) * _rSmooth;
     f.ring.material.opacity  = (0.36 + prox * 0.28) * _rSmooth;
-    f.light.intensity = (0.9 + prox * 2.2) * _rSmooth;
+    const _lightI = (0.9 + prox * 2.2) * _rSmooth;
+    if (f.light) f.light.intensity = _lightI; // desktop: per-floater light
+    f._lightI = _lightI;                       // mobile: consumed by the shared pool
+    f._dist2  = dist2;
 
     if(dist2<near.dist){ near.dist=dist2; if(dist2<7.84)near.ref=f; }
     // Advance tutorial when player reaches the octahedron
     if (tutStage === 3 && f === floaters[0] && dist2 < 7.84) _tutShow(4);
   });
+
+  // Mobile: drive the shared light pool from the nearest floaters
+  if (isMobile) {
+    const _nearest = floaters.slice().sort((a, b) => a._dist2 - b._dist2);
+    for (let i = 0; i < _mobileLights.length; i++) {
+      const pl = _mobileLights[i];
+      const f  = _nearest[i];
+      if (f) {
+        pl.position.copy(f.mesh.position);
+        pl.color.setHex(f.color);
+        pl.intensity = f._lightI;
+      } else {
+        pl.intensity = 0;
+      }
+    }
+  }
 
   // Interact
   const eDown=keys['KeyE']||keys['Space'];
@@ -1435,7 +1554,10 @@ function animate() {
       iCD = 0.5;
     } else if (f !== floaters[1]) {
       showToast(f.message);
-      if (!roomRevealed && f === floaters[0]) roomRevealed = true;
+      if (!roomRevealed && f === floaters[0]) {
+        roomRevealed = true;
+        loadExhibitTextures(); // background-preload photos so the first exhibit open is instant
+      }
       if (tutStage === 4) _tutDismiss();
       iCD=1.0;
       let b=0;
