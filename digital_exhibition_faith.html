@@ -13,7 +13,9 @@
     position: fixed; bottom: 28px; left: 0; right: 0;
     display: flex; justify-content: space-between; align-items: flex-end;
     padding: 0 28px; pointer-events: none; z-index: 10;
+    transition: opacity 0.35s ease;
   }
+  #ui.focus-hidden { opacity: 0 !important; }
   .key {
     width: 36px; height: 36px; border: 1px solid rgba(255,200,100,0.25); border-radius: 6px;
     background: rgba(0,0,0,0.55); color: rgba(255,200,100,0.5); font-size: 11px;
@@ -52,6 +54,9 @@
   }
   #joystick-zone.visible {
     opacity: 1; pointer-events: auto;
+  }
+  #joystick-zone.focus-hidden {
+    opacity: 0 !important; pointer-events: none !important;
   }
   #joystick-base {
     position: absolute; width: 130px; height: 130px; border-radius: 50%;
@@ -2346,6 +2351,7 @@ const _elToast       = document.getElementById('toast');
 const _elIprLabel    = document.getElementById('ipr-label');
 const _elIprIcon     = document.getElementById('ipr-icon');
 const _elAimReticle  = document.getElementById('aim-reticle');
+const _elUi               = document.getElementById('ui');
 const _elMmWrap           = document.getElementById('minimap-wrap');
 const _elFocusEscapeHint  = document.getElementById('focus-escape-hint');
 const _elCrateBack        = document.getElementById('crate-back-btn');
@@ -2354,17 +2360,9 @@ const _elExhibitNext      = document.getElementById('exhibit-next');
 let   _focusEscapeTimer   = null;
 
 function _showFocusEscapeHint() {
-  if (exhibitPanelN >= 2) {
-    _elFocusEscapeHint.innerHTML = isMobile
-      ? `<span class="feh-label">swipe or use arrows to browse</span><span class="feh-label" style="opacity:0.4">&middot;</span><span class="feh-label">tap to return</span>`
-      : `<span class="feh-label">use arrows to browse</span><span class="feh-key">spc</span><span class="feh-label">back</span>`;
-    _elExhibitPrev?.classList.add('visible');
-    _elExhibitNext?.classList.add('visible');
-  } else {
-    _elFocusEscapeHint.innerHTML = isMobile
-      ? `<span class="feh-label">tap to return</span>`
-      : `<span class="feh-key">spc</span><span class="feh-label">back</span>`;
-  }
+  _elFocusEscapeHint.innerHTML = isMobile
+    ? `<span class="feh-label">tap to return</span>`
+    : `<span class="feh-key">spc</span><span class="feh-label">back</span>`;
   _elFocusEscapeHint.classList.remove('dim');
   _elFocusEscapeHint.classList.add('visible');
   clearTimeout(_focusEscapeTimer);
@@ -2737,7 +2735,11 @@ function animate() {
 
   // Exhibition animation tick
   if (exhibitPhase) {
-    _elMmWrap.classList.toggle('focus-hidden', exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' || exhibitFocusPhase === 'switching');
+    const _exhibitFocusUIHidden = exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' || exhibitFocusPhase === 'switching';
+    _elMmWrap.classList.toggle('focus-hidden', _exhibitFocusUIHidden);
+    _elUi?.classList.toggle('focus-hidden', _exhibitFocusUIHidden);
+    _jZone.classList.toggle('focus-hidden', _exhibitFocusUIHidden);
+    if (_exhibitFocusUIHidden) _hideExhibitNav();
 
     if (!exhibitFocusPhase) exhibitAngle += dt * EXHIBIT_ORBIT_SPD;
 
