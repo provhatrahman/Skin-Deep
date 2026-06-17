@@ -1445,15 +1445,31 @@ function _preloadVinylAssets() {
   _scheduleIdle(_preloadVinylAssets);
 }
 
+// Pre-build the framed-panel's GPU resources once the photo's aspect is known:
+// generate (and cache) its border frame texture and force both the photo and the
+// frame onto the GPU. Doing this while the textures stream in keeps the first
+// exhibit open from stalling on ~6 supersampled canvas builds + uploads mid-spin.
+function _warmExhibitPanel(tex) {
+  if (!tex) return;
+  _initTex(tex);
+  const { w, h } = _fitExhibitSize(_texAspect(tex));
+  _initTex(_getExhibitFrameTex(w, h));
+}
+
 function loadExhibitTextures() {
   EXHIBITS.forEach(ex => {
     if (ex._loaded) return;
     ex._loaded = true;
+    _scheduleIdle(() => _warmExhibitPanel(ex.cardTex));
     ex.textures = ex.paths.map(path => {
       const tex = _configExhibitTex(_texLoader.load(path, img => {
         _setTexAspect(tex, img.width / img.height);
+        _scheduleIdle(() => _warmExhibitPanel(tex));
       }));
-      if (tex.image && tex.image.width) _setTexAspect(tex, tex.image.width / tex.image.height);
+      if (tex.image && tex.image.width) {
+        _setTexAspect(tex, tex.image.width / tex.image.height);
+        _scheduleIdle(() => _warmExhibitPanel(tex));
+      }
       return tex;
     });
   });
@@ -2344,6 +2360,12 @@ function _hideExhibitNav() {
   _elExhibitNext?.classList.remove('visible');
 }
 
+function _showExhibitFocusNav() {
+  if (exhibitPanelN < 2) return;
+  _elExhibitPrev?.classList.add('visible');
+  _elExhibitNext?.classList.add('visible');
+}
+
 function _showExhibitHint() {
   _elFocusEscapeHint.innerHTML = isMobile
     ? `<span class="feh-label">tap to focus</span>`
@@ -3016,9 +3038,22 @@ let _lastFrameTs = performance.now();
 let _emaFrameMs  = 1000 / 60;
 let _drsFrame    = 0;
 const _DRS_INTERVAL = 30; // evaluate ~twice per second
-function _applyDPR() {
+// Re-applying the same pixel ratio + size still reallocates the WebGL drawing
+// buffer in most browsers, which shows up as a one-frame hitch. Opening/closing
+// an exhibit calls this every time, so skip the resize when nothing actually
+// changed (the common case on machines already holding full DPR) to keep the
+// spin-in animation smooth.
+let _lastAppliedDPR = curDPR;
+let _lastAppliedW = window.innerWidth;
+let _lastAppliedH = window.innerHeight;
+function _applyDPR(force) {
+  const w = window.innerWidth, h = window.innerHeight;
+  if (!force && curDPR === _lastAppliedDPR && w === _lastAppliedW && h === _lastAppliedH) return;
+  _lastAppliedDPR = curDPR;
+  _lastAppliedW = w;
+  _lastAppliedH = h;
   renderer.setPixelRatio(curDPR);
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(w, h);
 }
 
 // (tutorial handles initial guidance)
@@ -3069,6 +3104,25 @@ function _showFocusEscapeHint() {
   _elFocusEscapeHint.classList.add('visible');
   clearTimeout(_focusEscapeTimer);
   _focusEscapeTimer = setTimeout(() => _elFocusEscapeHint.classList.add('dim'), 2800);
+}
+
+function _showExhibitFocusHints() {
+  const sep = `<span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`;
+  if (isMobile) {
+    _elFocusEscapeHint.innerHTML = exhibitPanelN >= 2
+      ? `<span class="feh-label">tap sides to browse</span>${sep}<span class="feh-label">tap to return</span>`
+      : `<span class="feh-label">tap to return</span>`;
+  } else {
+    const browse = exhibitPanelN >= 2
+      ? `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span></span><span class="feh-label">browse</span>${sep}`
+      : '';
+    _elFocusEscapeHint.innerHTML = browse + `<span class="feh-key">spc</span><span class="feh-label">back</span>`;
+  }
+  _elFocusEscapeHint.classList.remove('dim');
+  _elFocusEscapeHint.classList.add('visible');
+  clearTimeout(_focusEscapeTimer);
+  _focusEscapeTimer = setTimeout(() => _elFocusEscapeHint.classList.add('dim'), 3200);
+  _showExhibitFocusNav();
 }
 
 function _hideFocusEscapeHint() {
@@ -3463,8 +3517,6 @@ function animate() {
     _elMmWrap.classList.toggle('focus-hidden', _exhibitFocusUIHidden);
     _elUi?.classList.toggle('focus-hidden', _exhibitFocusUIHidden);
     _jZone.classList.toggle('focus-hidden', _exhibitFocusUIHidden);
-    if (_exhibitFocusUIHidden) _hideExhibitNav();
-
     if (!exhibitFocusPhase) exhibitAngle += dt * EXHIBIT_ORBIT_SPD;
 
     if (exhibitFocusPhase === 'focusing') {
@@ -3486,7 +3538,7 @@ function animate() {
         p.mesh.material.opacity = Math.max(0, 1 - s * 1.2);
         p.mesh.visible = p.mesh.material.opacity > 0.04;
       });
-      if (exhibitFocusT >= 1) { exhibitFocusPhase = 'focused'; _showFocusEscapeHint(); }
+      if (exhibitFocusT >= 1) { exhibitFocusPhase = 'focused'; _showExhibitFocusHints(); }
     } else if (exhibitFocusPhase === 'switching') {
       const fromMesh = exhibitPlanes[exhibitFocusIdx].mesh;
       const toMesh = exhibitPlanes[exhibitFocusSwitchTo].mesh;
@@ -3518,7 +3570,7 @@ function animate() {
         exhibitPlanes.forEach((p, i) => {
           if (i !== exhibitFocusIdx) p.mesh.visible = false;
         });
-        _showFocusEscapeHint();
+        _showExhibitFocusHints();
       }
     } else if (exhibitFocusPhase === 'focused') {
       const fp = exhibitPlanes[exhibitFocusIdx];
@@ -3582,7 +3634,11 @@ function animate() {
         p.mesh.scale.setScalar(1);
         p.mesh.material.transparent = false;
         p.mesh.material.opacity = 1;
-        if (exhibitPhase === 'open') p.mesh.visible = Math.cos(a - yaw) > -0.6;
+        // Cull the cards that sit behind the camera (it trails the player by 4.6
+        // units, just past the 4.5-unit orbit). Apply this during 'opening' too,
+        // not only 'open', so the rear card never scales up through the camera as
+        // the exhibit spins in — it simply stays hidden until the player turns.
+        if (exhibitPhase === 'open' || exhibitPhase === 'opening') p.mesh.visible = Math.cos(a - yaw) > -0.6;
       });
     }
 
@@ -3662,7 +3718,7 @@ function animate() {
 window.addEventListener('resize', () => {
   camera.aspect=window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth,window.innerHeight);
+  _applyDPR(true); // force: viewport genuinely changed, and keep the resize-skip cache in sync
 });
 
 animate();
