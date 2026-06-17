@@ -2480,6 +2480,29 @@ function _restoreExhibitFloater() {
   }
 }
 
+function _dismissExhibit() {
+  if (!exhibitPhase || exhibitPhase === 'closing') return;
+  if (exhibitFocusPhase) {
+    _resetExhibitFocus();
+    if (exhibitPlanes) exhibitPlanes.forEach(p => { p.mesh.visible = true; p.mesh.material.opacity = 1; });
+  }
+  exhibitPhase = 'closing';
+  _hideExhibitNav();
+  _hideFocusEscapeHint();
+  _restoreExhibitFloater();
+}
+
+function _dismissCrate() {
+  if (!cratePhase || cratePhase === 'closing') return;
+  _hideFocusEscapeHint();
+  if (_elCratePrev) _elCratePrev.classList.remove('visible');
+  if (_elCrateNext) _elCrateNext.classList.remove('visible');
+  cratePhase = 'closing';
+  crateSwapPhase = null;
+  crateT = 1;
+  _restoreExhibitFloater();
+}
+
 function _leaveExhibitRadius() {
   if (!exhibitTriggerFloater) return;
   const fp = exhibitTriggerFloater.mesh.position;
@@ -2488,22 +2511,9 @@ function _leaveExhibitRadius() {
   if (ldx * ldx + ldz * ldz <= EXHIBIT_LEAVE_R2) return;
 
   if (exhibitPhase && exhibitPhase !== 'closing') {
-    if (exhibitFocusPhase) {
-      _resetExhibitFocus();
-      if (exhibitPlanes) exhibitPlanes.forEach(p => { p.mesh.visible = true; p.mesh.material.opacity = 1; });
-    }
-    exhibitPhase = 'closing';
-    _hideExhibitNav();
-    _hideFocusEscapeHint();
-    _restoreExhibitFloater();
+    _dismissExhibit();
   } else if (cratePhase && cratePhase !== 'closing') {
-    _hideFocusEscapeHint();
-    if (_elCratePrev) _elCratePrev.classList.remove('visible');
-    if (_elCrateNext) _elCrateNext.classList.remove('visible');
-    cratePhase = 'closing';
-    crateSwapPhase = null;
-    crateT = 1;
-    _restoreExhibitFloater();
+    _dismissCrate();
   }
 }
 
@@ -3462,31 +3472,41 @@ function animate() {
     }
   }
 
-  // Dismiss exhibition — only when orbiting and nothing is aimed
-  if (escDown && !escWas && exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) {
-    exhibitPhase = 'closing';
-    _hideExhibitNav();
-    _hideFocusEscapeHint();
-    exhibitPlanes.forEach(p => { p.mesh.visible = true; p.mesh.material.opacity = 1; });
-    _restoreExhibitFloater();
-    iCD = 0.3;
-  // Dismiss crate while browsing — only when nothing is aimed at a disc
-  } else if (escDown && !escWas && cratePhase === 'browsing' && !crateFocusPhase && !crateCanFocus) {
-    _hideFocusEscapeHint();
-    if (_elCratePrev) _elCratePrev.classList.remove('visible');
-    if (_elCrateNext) _elCrateNext.classList.remove('visible');
-    cratePhase = 'closing';
-    crateSwapPhase = null;
-    crateT = 1;
-    _restoreExhibitFloater();
+  // Desktop Escape — unfocus when zoomed in, otherwise dismiss (same as walking out of radius)
+  if (escDown && !escWas && iCD <= 0) {
+    if (exhibitFocusPhase === 'focused') {
+      _startExhibitUnfocus();
+      _elPrompt.classList.remove('visible');
+      iCD = 0.35;
+    } else if (crateFocusPhase === 'focused') {
+      _startCrateUnfocus();
+      _elPrompt.classList.remove('visible');
+      iCD = 0.35;
+    } else if (exhibitPhase && exhibitPhase !== 'closing') {
+      _dismissExhibit();
+      _elPrompt.classList.remove('visible');
+      iCD = 0.3;
+    } else if (cratePhase && cratePhase !== 'closing') {
+      _dismissCrate();
+      _elPrompt.classList.remove('visible');
+      iCD = 0.3;
+    }
+  // Mobile tap to dismiss when nothing is aimed (desktop uses Escape above)
+  } else if (eDown && !eWas && isMobile && iCD <= 0 && (
+    (exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) ||
+    (cratePhase === 'browsing' && !crateFocusPhase && !crateCanFocus)
+  )) {
+    if (exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) _dismissExhibit();
+    else _dismissCrate();
+    _elPrompt.classList.remove('visible');
     iCD = 0.3;
   // Focus the panel under the reticle
   } else if (eDown && !eWas && exhibitCanFocus && iCD <= 0) {
     _startExhibitFocus(exhibitAimedIdx);
     _elPrompt.classList.remove('visible');
     iCD = 0.35;
-  // Return from focused view to the carousel
-  } else if (escDown && !escWas && exhibitFocusPhase === 'focused' && iCD <= 0) {
+  // Mobile tap to return from focused view (desktop Escape unfocuses above)
+  } else if (eDown && !eWas && isMobile && exhibitFocusPhase === 'focused' && iCD <= 0) {
     _startExhibitUnfocus();
     _elPrompt.classList.remove('visible');
     iCD = 0.35;
@@ -3496,8 +3516,8 @@ function animate() {
     _elPrompt.classList.remove('visible');
     _elAimReticle.classList.remove('visible', 'locked');
     iCD = 0.35;
-  // Return the focused disc to the crate
-  } else if (escDown && !escWas && crateFocusPhase === 'focused' && iCD <= 0) {
+  // Mobile tap to return focused disc to the crate
+  } else if (eDown && !eWas && isMobile && crateFocusPhase === 'focused' && iCD <= 0) {
     _startCrateUnfocus();
     _elPrompt.classList.remove('visible');
     iCD = 0.35;
