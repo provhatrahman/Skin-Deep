@@ -196,9 +196,14 @@
   }
   #crate-sc-credit a { color: #cccccc; text-decoration: none; }
 
-  /* Crate prev/next reuse the exhibit carousel nav style (side, vertically centred) */
+  /* Crate prev/next reuse the exhibit carousel nav style (side, vertically centred).
+     Desktop cycles records with the up/down arrow keys, so the side buttons are mobile-only. */
   #crate-prev-btn { left: 16px; }
   #crate-next-btn { right: 16px; }
+  #crate-prev-btn, #crate-next-btn { display: none; }
+  @media (pointer: coarse) {
+    #crate-prev-btn, #crate-next-btn { display: flex; }
+  }
 
   /* ── EXHIBIT CAROUSEL NAV (mobile) ── */
   .exhibit-nav-btn {
@@ -236,6 +241,25 @@
   @media (pointer: coarse) {
     #focus-escape-hint { backdrop-filter: none; -webkit-backdrop-filter: none; }
   }
+
+  /* Crate record cycling hint (desktop keyboard only) */
+  #crate-browse-hint {
+    position: fixed; bottom: 28px; left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none; z-index: 25;
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 16px; border-radius: 24px;
+    background: rgba(4,2,0,0.72);
+    border: 1px solid rgba(255,200,100,0.2);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,200,100,0.07);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    opacity: 0; transition: opacity 0.45s ease;
+    white-space: nowrap;
+  }
+  #crate-browse-hint.visible { opacity: 1; }
+  #crate-browse-hint .cbh-keys { display: inline-flex; gap: 4px; }
+  #crate-browse-hint .feh-key { font-size: 11px; line-height: 1; padding: 3px 6px; }
+  @media (pointer: coarse) { #crate-browse-hint { display: none; } }
 
   #tut-overlay {
     position: fixed; inset: 0; z-index: 30; pointer-events: none;
@@ -452,6 +476,7 @@
 </div>
 <div id="aim-reticle"></div>
 <div id="focus-escape-hint"></div>
+<div id="crate-browse-hint"><span class="cbh-keys"><span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">browse records</span></div>
 <div id="crate-sc-embed">
   <iframe id="crate-sc-iframe" width="100%" height="300" scrolling="no" frameborder="no" allow="autoplay; encrypted-media"></iframe>
   <div id="crate-sc-credit"><a href="https://soundcloud.com/user-612196404" title="NTS 2023" target="_blank">NTS 2023</a> &middot; <a href="https://soundcloud.com/user-612196404/in-faith-w-provhat-goldtooth" title="In Faith w/ Provhat &amp; GoldTooth 150823" target="_blank">In Faith w/ Provhat &amp; GoldTooth 150823</a></div>
@@ -1344,6 +1369,7 @@ const VINYL = {
   blankTex:  null,
   crateWoodV: null,
   crateWoodH: null,
+  _box: null,
   _built: false,
 };
 
@@ -1366,18 +1392,57 @@ function _loadRecordTex(path) {
   return tex;
 }
 
+// Force a texture's GPU upload now instead of on the first frame it's rendered.
+// Pre-warming during idle keeps the crate's first open from stalling on ~70 MB
+// of disc/wood texture uploads.
+function _initTex(t) {
+  if (t && renderer.initTexture) { try { renderer.initTexture(t); } catch (e) {} }
+}
+
+const _scheduleIdle = (fn) =>
+  (window.requestIdleCallback ? requestIdleCallback(() => fn(), { timeout: 1000 }) : setTimeout(fn, 60));
+
+// Ordered, idempotent build steps for the whole crate. The procedural wood
+// grain and supersampled disc labels are the expensive part, so each lives in
+// its own slice. _buildVinylAssets() flushes them synchronously (fallback when
+// the crate is opened before preload finishes); _preloadVinylAssets() runs one
+// slice per idle callback so the launch never blocks the main thread.
+let _vinylSteps = null;
+let _vinylStepIdx = 0;
+function _ensureVinylSteps() {
+  if (_vinylSteps) return _vinylSteps;
+  const recSteps = VINYL.records.map(r => () => {
+    r.coverTex = r.imagePath ? _loadRecordTex(r.imagePath) : VINYL.blankTex;
+    r.backTex  = VINYL.blankTex;
+    r.discTex  = makeVinylDiscTex(r.disc);
+    _initTex(r.discTex);
+  });
+  _vinylSteps = [
+    () => { VINYL.blankTex = makeVinylBlankSleeveTex(); _initTex(VINYL.blankTex); },
+    () => { VINYL.crateWoodV = makeCrateWoodTextures('v'); _initTex(VINYL.crateWoodV.map); _initTex(VINYL.crateWoodV.bumpMap); },
+    () => { VINYL.crateWoodH = makeCrateWoodTextures('h'); _initTex(VINYL.crateWoodH.map); _initTex(VINYL.crateWoodH.bumpMap); },
+    ...recSteps,
+    () => {
+      VINYL._box = _buildCrateBox();
+      VINYL._box.userData.boxMats.forEach(m => { _initTex(m.map); _initTex(m.bumpMap); });
+    },
+  ];
+  return _vinylSteps;
+}
+
 function _buildVinylAssets() {
   if (VINYL._built) return;
+  const steps = _ensureVinylSteps();
+  while (_vinylStepIdx < steps.length) steps[_vinylStepIdx++]();
   VINYL._built = true;
-  const blankTex = makeVinylBlankSleeveTex();
-  VINYL.blankTex = blankTex;
-  VINYL.records.forEach(r => {
-    r.coverTex = r.imagePath ? _loadRecordTex(r.imagePath) : blankTex;
-    r.backTex = blankTex;
-    r.discTex = makeVinylDiscTex(r.disc);
-  });
-  VINYL.crateWoodV = makeCrateWoodTextures('v');
-  VINYL.crateWoodH = makeCrateWoodTextures('h');
+}
+
+function _preloadVinylAssets() {
+  if (VINYL._built) return;
+  const steps = _ensureVinylSteps();
+  if (_vinylStepIdx < steps.length) steps[_vinylStepIdx++]();
+  if (_vinylStepIdx >= steps.length) { VINYL._built = true; return; }
+  _scheduleIdle(_preloadVinylAssets);
 }
 
 function loadExhibitTextures() {
@@ -1763,6 +1828,8 @@ let exhibitFocusT      = 0;
 let focusDimT          = 0;
 let _exhibitNavLWas    = false;
 let _exhibitNavRWas    = false;
+let _crateNavUpWas     = false;
+let _crateNavDnWas     = false;
 let _exhibitSwipeAcc   = 0;
 
 // ── VINYL CRATE STATE ──
@@ -1810,7 +1877,7 @@ const CRATE_DISC_R = RECORD_SIZE * 0.46;
 const keys = {};
 const keyUIMap = { KeyW:'key-w', KeyA:'key-a', KeyS:'key-s', KeyD:'key-d', ArrowLeft:'key-left', ArrowRight:'key-right', Space:'key-space' };
 document.addEventListener('keydown', e => {
-  if (e.code === 'Space') e.preventDefault();
+  if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown') e.preventDefault();
   keys[e.code] = true;
   if (keyUIMap[e.code]) document.getElementById(keyUIMap[e.code])?.classList.add('active');
 });
@@ -2730,8 +2797,13 @@ function _openCrate(px, pz, openYaw) {
   crateGroup.rotation.y = openYaw + Math.PI;
   scene.add(crateGroup);
 
-  const box = _buildCrateBox();
+  // The crate box never changes, so build it once and reuse it across opens —
+  // this avoids re-cloning 12 wood textures and rebuilding ~17 geometries every
+  // launch. _closeCrate() detaches it before disposal so it survives.
+  if (!VINYL._box) VINYL._box = _buildCrateBox();
+  const box = VINYL._box;
   crateGroup.add(box);
+  crateGroup.userData.box = box;
 
   _crateSelGrp    = null;
   _crateSeatedGrp = null;
@@ -2904,6 +2976,8 @@ function _tickCrateFocus(dt) {
 function _closeCrate() {
   _resetCrateFocus();
   if (crateGroup) {
+    // Detach the cached, reusable box so it isn't disposed with the records.
+    if (crateGroup.userData.box) crateGroup.remove(crateGroup.userData.box);
     _disposeCrateObject(crateGroup);
     scene.remove(crateGroup);
     crateGroup = null;
@@ -2961,6 +3035,7 @@ const _elMmWrap           = document.getElementById('minimap-wrap');
 const _elFocusEscapeHint  = document.getElementById('focus-escape-hint');
 const _elCratePrev   = document.getElementById('crate-prev-btn');
 const _elCrateNext   = document.getElementById('crate-next-btn');
+const _elCrateBrowseHint = document.getElementById('crate-browse-hint');
 const _elCrateSc       = document.getElementById('crate-sc-embed');
 const _elCrateScIframe = document.getElementById('crate-sc-iframe');
 const _elCrateScCredit = document.getElementById('crate-sc-credit');
@@ -3309,6 +3384,19 @@ function animate() {
     _exhibitNavLWas = false; _exhibitNavRWas = false;
   }
 
+  // ── CRATE RECORD CYCLING (desktop up/down arrows while browsing the crate) ──
+  const _crateBrowsable = cratePhase === 'browsing' && !crateFocusPhase && VINYL.records.length > 1;
+  if (_crateBrowsable && !crateSwapPhase && !isMobile && iCD <= 0) {
+    const navUp = keys['ArrowUp'];
+    const navDn = keys['ArrowDown'];
+    if (navUp && !_crateNavUpWas) { _startCrateSwap(-1); iCD = 0.28; }  // up = previous record
+    if (navDn && !_crateNavDnWas) { _startCrateSwap(1);  iCD = 0.28; }  // down = next record
+    _crateNavUpWas = navUp; _crateNavDnWas = navDn;
+  } else {
+    _crateNavUpWas = false; _crateNavDnWas = false;
+  }
+  if (_elCrateBrowseHint) _elCrateBrowseHint.classList.toggle('visible', _crateBrowsable && !isMobile);
+
   // Dismiss exhibition — only when orbiting and nothing is aimed
   if (eDown && !eWas && exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) {
     exhibitPhase = 'closing';
@@ -3353,6 +3441,7 @@ function animate() {
       if (!roomRevealed && f === floaters[0]) {
         roomRevealed = true;
         loadExhibitTextures(); // background-preload photos so the first exhibit open is instant
+        _scheduleIdle(_preloadVinylAssets); // ensure the crate is warm too
       }
       if (tutStage === 4) _tutDismiss();
       iCD=1.0;
@@ -3577,6 +3666,10 @@ window.addEventListener('resize', () => {
 });
 
 animate();
+
+// Warm the vinyl crate's procedural textures + box during idle so the first
+// open is instant rather than stalling on the interact press.
+_scheduleIdle(_preloadVinylAssets);
 
 // ══════════════════════════════════════════
 //  MINIMAP
