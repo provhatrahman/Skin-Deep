@@ -15,6 +15,16 @@
     padding: 0 28px; pointer-events: none; z-index: 10;
     transition: opacity 0.35s ease;
   }
+  #key-space {
+    position: absolute; left: 50%; bottom: 6px;
+    transform: translateX(-50%);
+    opacity: 0; visibility: hidden;
+    transition: opacity 0.25s ease, visibility 0.25s ease, all 0.15s ease;
+  }
+  #key-space.active,
+  #key-space.tut-highlight {
+    opacity: 1; visibility: visible;
+  }
   #ui.focus-hidden { opacity: 0 !important; }
   .key {
     width: 36px; height: 36px; border: 1px solid rgba(255,200,100,0.25); border-radius: 6px;
@@ -458,7 +468,7 @@
       <div class="key" id="key-d">D</div>
     </div>
   </div>
-  <div class="key" id="key-space" style="margin-bottom:6px;width:auto;padding:0 10px;font-size:10px">
+  <div class="key" id="key-space" style="width:auto;padding:0 10px;font-size:10px">
     space
   </div>
   <div style="display:flex;flex-direction:column;gap:6px;align-items:center">
