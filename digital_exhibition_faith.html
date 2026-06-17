@@ -267,9 +267,19 @@
     white-space: nowrap;
   }
   #crate-browse-hint.visible { opacity: 1; }
+  #crate-browse-hint.dim { opacity: 0.22; transition: opacity 1.8s ease; }
   #crate-browse-hint .cbh-keys { display: inline-flex; gap: 4px; }
   #crate-browse-hint .feh-key { font-size: 11px; line-height: 1; padding: 3px 6px; }
-  @media (pointer: coarse) { #crate-browse-hint { display: none; } }
+  @media (pointer: coarse) {
+    #crate-browse-hint { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  }
+  @keyframes crate-nav-hint-pulse {
+    0%, 100% { box-shadow: 0 4px 18px rgba(0,0,0,0.8), 0 0 14px rgba(255,180,60,0.18), inset 0 1px 0 rgba(255,200,100,0.08); border-color: rgba(255,200,100,0.3); }
+    50% { box-shadow: 0 4px 18px rgba(0,0,0,0.8), 0 0 28px rgba(255,180,60,0.55), inset 0 1px 0 rgba(255,200,100,0.12); border-color: rgba(255,200,100,0.65); }
+  }
+  #crate-prev-btn.hint-pulse, #crate-next-btn.hint-pulse {
+    animation: crate-nav-hint-pulse 1.2s ease-in-out infinite;
+  }
 
   #tut-overlay {
     position: fixed; inset: 0; z-index: 30; pointer-events: none;
@@ -2505,8 +2515,8 @@ function _dismissExhibit() {
 function _dismissCrate() {
   if (!cratePhase || cratePhase === 'closing') return;
   _hideFocusEscapeHint();
-  if (_elCratePrev) _elCratePrev.classList.remove('visible');
-  if (_elCrateNext) _elCrateNext.classList.remove('visible');
+  _hideCrateNav();
+  _hideCrateBrowseHint();
   cratePhase = 'closing';
   crateSwapPhase = null;
   crateT = 1;
@@ -2754,8 +2764,7 @@ function _startCrateSwap(dir) {
   }
   crateSwapPhase = 'swapping';
   crateSwapT = 0;
-  if (_elCratePrev) _elCratePrev.classList.remove('visible');
-  if (_elCrateNext) _elCrateNext.classList.remove('visible');
+  _hideCrateNav();
 }
 
 function _tickCrateSwap(dt) {
@@ -2816,8 +2825,7 @@ function _tickCrateSwap(dt) {
     // whichever direction is chosen then.
     const N = VINYL.records.length;
     _crateIdx = (_crateIdx + _crateSwapDir + N) % N;
-    if (_elCratePrev) _elCratePrev.classList.add('visible');
-    if (_elCrateNext) _elCrateNext.classList.add('visible');
+    _showCrateNav(false);
   }
 }
 
@@ -2942,8 +2950,8 @@ function _startCrateFocus(disc) {
   crateFocusPhase = 'focusing';
   crateFocusT = 0;
   _hideFocusEscapeHint();
-  if (_elCratePrev) _elCratePrev.classList.remove('visible');
-  if (_elCrateNext) _elCrateNext.classList.remove('visible');
+  _hideCrateNav();
+  _hideCrateBrowseHint();
 }
 
 function _startCrateUnfocus() {
@@ -2974,8 +2982,8 @@ function _finishCrateUnfocus() {
   crateFocusPhase = null;
   crateFocusT = 0;
   if (cratePhase === 'browsing' && !crateSwapPhase) {
-    if (_elCratePrev) _elCratePrev.classList.add('visible');
-    if (_elCrateNext) _elCrateNext.classList.add('visible');
+    _showCrateNav(false);
+    _showCrateBrowseHint();
   }
   iCD = 0.3;
 }
@@ -3034,8 +3042,8 @@ function _closeCrate() {
   _crateSeatedGrp = null;
   _crateIdx       = 0;
   _hideFocusEscapeHint();
-  if (_elCratePrev) _elCratePrev.classList.remove('visible');
-  if (_elCrateNext) _elCrateNext.classList.remove('visible');
+  _hideCrateNav();
+  _hideCrateBrowseHint();
   _elMmWrap.classList.remove('focus-hidden');
   _elUi?.classList.remove('focus-hidden');
   _jZone.classList.remove('focus-hidden');
@@ -3092,6 +3100,56 @@ const _elFocusEscapeHint  = document.getElementById('focus-escape-hint');
 const _elCratePrev   = document.getElementById('crate-prev-btn');
 const _elCrateNext   = document.getElementById('crate-next-btn');
 const _elCrateBrowseHint = document.getElementById('crate-browse-hint');
+let   _crateBrowseHintTimer = null;
+let   _crateNavPulseTimer   = null;
+
+function _hideCrateNav() {
+  if (_elCratePrev) _elCratePrev.classList.remove('visible', 'hint-pulse');
+  if (_elCrateNext) _elCrateNext.classList.remove('visible', 'hint-pulse');
+  clearTimeout(_crateNavPulseTimer);
+}
+
+function _showCrateNav(pulse) {
+  if (VINYL.records.length < 2) return;
+  if (_elCratePrev) _elCratePrev.classList.add('visible');
+  if (_elCrateNext) _elCrateNext.classList.add('visible');
+  if (pulse && isMobile) {
+    _elCratePrev?.classList.add('hint-pulse');
+    _elCrateNext?.classList.add('hint-pulse');
+    clearTimeout(_crateNavPulseTimer);
+    _crateNavPulseTimer = setTimeout(() => {
+      _elCratePrev?.classList.remove('hint-pulse');
+      _elCrateNext?.classList.remove('hint-pulse');
+    }, 4200);
+  }
+}
+
+function _hideCrateBrowseHint() {
+  clearTimeout(_crateBrowseHintTimer);
+  _elCrateBrowseHint?.classList.remove('visible', 'dim');
+}
+
+function _showCrateBrowseHint() {
+  if (!_elCrateBrowseHint || cratePhase !== 'browsing' || crateFocusPhase) return;
+  const multi = VINYL.records.length > 1;
+  if (isMobile) {
+    if (!multi) { _hideCrateBrowseHint(); return; }
+    _elCrateBrowseHint.innerHTML =
+      `<span class="cbh-keys"><span class="feh-key">&lsaquo;</span><span class="feh-key">&rsaquo;</span></span>` +
+      `<span class="feh-label">tap arrows to browse records</span>`;
+  } else {
+    const browseKeys = multi
+      ? `<span class="cbh-keys"><span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">browse records</span><span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`
+      : '';
+    _elCrateBrowseHint.innerHTML = browseKeys + `<span class="feh-key">esc</span><span class="feh-label">close</span>`;
+  }
+  _elCrateBrowseHint.classList.remove('dim');
+  _elCrateBrowseHint.classList.add('visible');
+  clearTimeout(_crateBrowseHintTimer);
+  if (isMobile && multi) {
+    _crateBrowseHintTimer = setTimeout(() => _elCrateBrowseHint.classList.add('dim'), 3800);
+  }
+}
 const _elCrateSc       = document.getElementById('crate-sc-embed');
 const _elCrateScIframe = document.getElementById('crate-sc-iframe');
 const _elCrateScCredit = document.getElementById('crate-sc-credit');
@@ -3152,12 +3210,24 @@ function _hideFocusEscapeHint() {
 }
 
 if (_elCratePrev) {
-  const _cratePrevFire = e => { e.preventDefault(); e.stopPropagation(); _startCrateSwap(-1); };
+  const _cratePrevFire = e => {
+    e.preventDefault(); e.stopPropagation();
+    _elCratePrev.classList.remove('hint-pulse');
+    _elCrateNext?.classList.remove('hint-pulse');
+    clearTimeout(_crateNavPulseTimer);
+    _startCrateSwap(-1);
+  };
   _elCratePrev.addEventListener('click', _cratePrevFire);
   _elCratePrev.addEventListener('touchstart', _cratePrevFire, { passive: false });
 }
 if (_elCrateNext) {
-  const _crateNextFire = e => { e.preventDefault(); e.stopPropagation(); _startCrateSwap(1); };
+  const _crateNextFire = e => {
+    e.preventDefault(); e.stopPropagation();
+    _elCrateNext.classList.remove('hint-pulse');
+    _elCratePrev?.classList.remove('hint-pulse');
+    clearTimeout(_crateNavPulseTimer);
+    _startCrateSwap(1);
+  };
   _elCrateNext.addEventListener('click', _crateNextFire);
   _elCrateNext.addEventListener('touchstart', _crateNextFire, { passive: false });
 }
@@ -3471,16 +3541,6 @@ function animate() {
   } else {
     _crateNavUpWas = false; _crateNavDnWas = false;
   }
-  if (_elCrateBrowseHint) {
-    const _crateBrowseHintVisible = cratePhase === 'browsing' && !crateFocusPhase && !isMobile;
-    _elCrateBrowseHint.classList.toggle('visible', _crateBrowseHintVisible);
-    if (_crateBrowseHintVisible) {
-      const browseKeys = VINYL.records.length > 1
-        ? `<span class="cbh-keys"><span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">browse records</span><span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`
-        : '';
-      _elCrateBrowseHint.innerHTML = browseKeys + `<span class="feh-key">esc</span><span class="feh-label">close</span>`;
-    }
-  }
 
   // Desktop Escape — unfocus when zoomed in, otherwise dismiss (same as walking out of radius)
   if (escDown && !escWas && iCD <= 0) {
@@ -3724,8 +3784,8 @@ function animate() {
       if (crateGroup) crateGroup.scale.setScalar(0.04 + s * 0.96);
       if (crateT >= 1) {
         cratePhase = 'browsing';
-        if (_elCratePrev) _elCratePrev.classList.add('visible');
-        if (_elCrateNext) _elCrateNext.classList.add('visible');
+        _showCrateNav(true);
+        _showCrateBrowseHint();
       }
     } else if (cratePhase === 'closing') {
       crateT = Math.max(0, crateT - dt / CRATE_CLOSE_DUR);
