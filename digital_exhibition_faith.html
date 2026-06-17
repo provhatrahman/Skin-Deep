@@ -173,6 +173,29 @@
   #focus-escape-hint.visible { opacity: 1; }
   #focus-escape-hint.dim { opacity: 0.22; transition: opacity 1.8s ease; }
 
+  /* SoundCloud embed that takes over the focused record's centre */
+  #crate-sc-embed {
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(0.92);
+    width: min(86vw, 360px); z-index: 27;
+    border-radius: 12px; overflow: hidden;
+    box-shadow: 0 12px 44px rgba(0,0,0,0.75), 0 0 24px rgba(255,120,0,0.2);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.45s ease, transform 0.45s ease;
+  }
+  #crate-sc-embed.visible {
+    opacity: 1; pointer-events: auto;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  #crate-sc-embed iframe { display: block; width: 100%; height: 300px; border: 0; }
+  #crate-sc-credit {
+    font-size: 10px; color: #cccccc; line-break: anywhere; word-break: normal;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    font-family: Interstate, 'Lucida Grande', 'Lucida Sans Unicode', 'Lucida Sans', Garuda, Verdana, Tahoma, sans-serif;
+    font-weight: 100; padding: 4px 9px; background: rgba(4,2,0,0.72);
+  }
+  #crate-sc-credit a { color: #cccccc; text-decoration: none; }
+
   /* Crate prev/next reuse the exhibit carousel nav style (side, vertically centred) */
   #crate-prev-btn { left: 16px; }
   #crate-next-btn { right: 16px; }
@@ -429,6 +452,10 @@
 </div>
 <div id="aim-reticle"></div>
 <div id="focus-escape-hint"></div>
+<div id="crate-sc-embed">
+  <iframe id="crate-sc-iframe" width="100%" height="300" scrolling="no" frameborder="no" allow="autoplay; encrypted-media"></iframe>
+  <div id="crate-sc-credit"><a href="https://soundcloud.com/user-612196404" title="NTS 2023" target="_blank">NTS 2023</a> &middot; <a href="https://soundcloud.com/user-612196404/in-faith-w-provhat-goldtooth" title="In Faith w/ Provhat &amp; GoldTooth 150823" target="_blank">In Faith w/ Provhat &amp; GoldTooth 150823</a></div>
+</div>
 <button id="crate-prev-btn" class="exhibit-nav-btn" aria-label="previous record">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 18l-6-6 6-6"/></svg>
 </button>
@@ -1253,7 +1280,10 @@ function makeVinylDiscTex() {
 // with a smoothstep curve. The group also bobs on Y: sin(t*1.4)*0.03.
 const VINYL = {
   floaterIdx: 3,
-  records: [{ imagePath: 'images/infaith/in%20faith%20goldtooth.jpeg' }],
+  records: [{
+    imagePath: 'images/infaith/in%20faith%20goldtooth.jpeg',
+    soundcloud: 'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/soundcloud%253Atracks%253A1594421781&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true&visual=true',
+  }],
   discTex:   null,
   blankTex:  null,
   crateWoodV: null,
@@ -1695,6 +1725,7 @@ let crateFocusPhase   = null;   // 'focusing' | 'focused' | 'unfocusing'
 let crateFocusT       = 0;
 let crateFocusMesh    = null;   // temporary disc plane lifted into the scene
 let crateFocusDiscRef = null;   // the in-crate disc hidden while focused
+let crateFocusRec     = null;   // record data behind the focused disc (for the SoundCloud embed)
 const CRATE_FOCUS_DUR = 0.6;
 
 const CRATE_OPEN_DUR     = 0.5;
@@ -2500,7 +2531,7 @@ function _buildCrateRecord(rec) {
   disc.position.set(0, DISC_PEEK, -RECORD_THICK * 0.5 - 0.002);
   grp.add(disc);
 
-  grp.userData = { sleeve, disc, sleeveGeo, discGeo, mats: [edgeMat, coverMat, backMat, discMat] };
+  grp.userData = { sleeve, disc, sleeveGeo, discGeo, mats: [edgeMat, coverMat, backMat, discMat], rec };
   return grp;
 }
 
@@ -2670,6 +2701,7 @@ function _startCrateFocus(disc) {
   scene.add(crateFocusMesh);
 
   crateFocusDiscRef = disc;
+  crateFocusRec = (_crateSelGrp && _crateSelGrp.userData) ? _crateSelGrp.userData.rec || null : null;
   disc.visible = false;
 
   _focusFromPos.copy(_crateDiscPos);
@@ -2687,6 +2719,7 @@ function _startCrateFocus(disc) {
 function _startCrateUnfocus() {
   if (crateFocusPhase !== 'focused' || !crateFocusMesh) return;
   _hideFocusEscapeHint();
+  _hideCrateScEmbed();
   _focusFromPos.copy(crateFocusMesh.position);
   _focusFromQuat.copy(crateFocusMesh.quaternion);
   _focusFromScale = crateFocusMesh.scale.x;
@@ -2707,6 +2740,7 @@ function _disposeCrateFocusMesh() {
 
 function _finishCrateUnfocus() {
   _disposeCrateFocusMesh();
+  crateFocusRec = null;
   crateFocusPhase = null;
   crateFocusT = 0;
   if (cratePhase === 'browsing' && !crateSwapPhase) {
@@ -2718,6 +2752,8 @@ function _finishCrateUnfocus() {
 
 function _resetCrateFocus() {
   _disposeCrateFocusMesh();
+  _hideCrateScEmbed();
+  crateFocusRec = null;
   crateFocusPhase = null;
   crateFocusT = 0;
 }
@@ -2732,7 +2768,7 @@ function _tickCrateFocus(dt) {
     _focusLerpQuat.slerpQuaternions(_focusFromQuat, _focusToQuat, s);
     crateFocusMesh.quaternion.copy(_focusLerpQuat);
     crateFocusMesh.scale.setScalar(_focusFromScale + (_focusToScale - _focusFromScale) * s);
-    if (crateFocusT >= 1) { crateFocusPhase = 'focused'; _showFocusEscapeHint(); }
+    if (crateFocusT >= 1) { crateFocusPhase = 'focused'; _showFocusEscapeHint(); _showCrateScEmbed(crateFocusRec); }
   } else if (crateFocusPhase === 'focused') {
     _refreshCrateFocusTarget();
     crateFocusMesh.position.copy(_focusToPos);
@@ -2809,6 +2845,21 @@ const _elMmWrap           = document.getElementById('minimap-wrap');
 const _elFocusEscapeHint  = document.getElementById('focus-escape-hint');
 const _elCratePrev   = document.getElementById('crate-prev-btn');
 const _elCrateNext   = document.getElementById('crate-next-btn');
+const _elCrateSc       = document.getElementById('crate-sc-embed');
+const _elCrateScIframe = document.getElementById('crate-sc-iframe');
+
+function _showCrateScEmbed(rec) {
+  if (!_elCrateSc || !rec || !rec.soundcloud) return;
+  if (_elCrateScIframe && _elCrateScIframe.src !== rec.soundcloud) _elCrateScIframe.src = rec.soundcloud;
+  _elCrateSc.classList.add('visible');
+}
+
+function _hideCrateScEmbed() {
+  if (!_elCrateSc) return;
+  _elCrateSc.classList.remove('visible');
+  // Clearing the src stops any playing audio when leaving the focused record.
+  if (_elCrateScIframe) _elCrateScIframe.src = '';
+}
 const _elExhibitPrev = document.getElementById('exhibit-prev');
 const _elExhibitNext = document.getElementById('exhibit-next');
 let   _focusEscapeTimer = null;
