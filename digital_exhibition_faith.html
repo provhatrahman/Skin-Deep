@@ -173,25 +173,9 @@
   #focus-escape-hint.visible { opacity: 1; }
   #focus-escape-hint.dim { opacity: 0.22; transition: opacity 1.8s ease; }
 
-  /* ── CRATE BACK / CLOSE BUTTON ── */
-  #crate-back-btn {
-    position: fixed; top: 20px; left: 20px; z-index: 26;
-    width: 42px; height: 42px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    color: rgba(255,220,140,0.9);
-    background: rgba(4,2,0,0.72);
-    border: 1px solid rgba(255,200,100,0.3);
-    box-shadow: 0 4px 18px rgba(0,0,0,0.8), 0 0 14px rgba(255,180,60,0.18), inset 0 1px 0 rgba(255,200,100,0.08);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    cursor: pointer; opacity: 0; pointer-events: none;
-    transition: opacity 0.3s ease, transform 0.12s ease;
-  }
-  #crate-back-btn.visible { opacity: 1; pointer-events: auto; }
-  #crate-back-btn:active { transform: scale(0.92); }
-
-  @media (pointer: coarse) {
-    #crate-back-btn { backdrop-filter: none; -webkit-backdrop-filter: none; }
-  }
+  /* Crate prev/next reuse the exhibit carousel nav style (side, vertically centred) */
+  #crate-prev-btn { left: 16px; }
+  #crate-next-btn { right: 16px; }
 
   /* ── EXHIBIT CAROUSEL NAV (mobile) ── */
   .exhibit-nav-btn {
@@ -445,8 +429,11 @@
 </div>
 <div id="aim-reticle"></div>
 <div id="focus-escape-hint"></div>
-<button id="crate-back-btn" aria-label="back">
+<button id="crate-prev-btn" class="exhibit-nav-btn" aria-label="previous record">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 18l-6-6 6-6"/></svg>
+</button>
+<button id="crate-next-btn" class="exhibit-nav-btn" aria-label="next record">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M9 18l6-6-6-6"/></svg>
 </button>
 <button id="exhibit-prev" class="exhibit-nav-btn" aria-label="previous image">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 18l-6-6 6-6"/></svg>
@@ -610,7 +597,9 @@ function makeExhibitFrameTex(canvasW, canvasH) {
 
 function makePhotographerCardTex() {
   const W = 512, H = 384;
-  const SS = 2; // supersample: draw at 2x so text stays crisp at full DPR
+  // Supersample so the text stays crisp when the card is brought to full-screen
+  // focus. matchMedia is queried inline because this builds before `isMobile`.
+  const SS = window.matchMedia('(pointer: coarse)').matches ? 2 : 4; // 1024 / 2048 px
   const cv = document.createElement('canvas');
   cv.width = W * SS; cv.height = H * SS;
   const ctx = cv.getContext('2d');
@@ -703,7 +692,7 @@ function makePhotographerCardTex() {
 
 function makeMasjidUnclesCardTex() {
   const W = 512, H = 384;
-  const SS = 2;
+  const SS = window.matchMedia('(pointer: coarse)').matches ? 2 : 4; // 1024 / 2048 px — crisp at focus fill
   const cv = document.createElement('canvas');
   cv.width = W * SS; cv.height = H * SS;
   const ctx = cv.getContext('2d');
@@ -1134,19 +1123,173 @@ const EXHIBITS = [
   },
 ];
 
+// Plain dark sleeve face for blank records.
+function makeVinylBlankSleeveTex() {
+  const S = 512;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = 'rgb(4,2,1)';
+  ctx.fillRect(0, 0, S, S);
+  return new THREE.CanvasTexture(cv);
+}
+
+// Black vinyl disc — concentric grooves + centre label.
+// Label reads: NTS / "In Faith" / "w/ Provhat & GoldTooth" / "15 Aug 2023" / genres.
+function makeVinylDiscTex() {
+  // S is the logical layout size — every coordinate below stays in this space.
+  // The canvas is supersampled (SS) so the label text stays crisp when the disc
+  // is brought forward to fill the viewport in focus mode.
+  const S = 512;
+  const SS = isMobile ? 2 : 4;   // 1024 / 2048 px backing texture
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S * SS;
+  const ctx = cv.getContext('2d');
+  ctx.scale(SS, SS);
+  const cx = S / 2, cy = S / 2, R = S / 2 - 2;
+
+  ctx.clearRect(0, 0, S, S);
+  ctx.fillStyle = '#0b0b0d';
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+
+  ctx.strokeStyle = 'rgba(120,120,130,0.22)';
+  ctx.lineWidth = 1;
+  for (let r = R * 0.36; r < R - 4; r += 4) {
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  const sheen = ctx.createLinearGradient(0, 0, S, S);
+  sheen.addColorStop(0, 'rgba(255,255,255,0.05)');
+  sheen.addColorStop(0.5, 'rgba(255,255,255,0)');
+  sheen.addColorStop(1, 'rgba(255,255,255,0.06)');
+  ctx.fillStyle = sheen;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+
+  // Centre label — warm amber gradient, classic NTS style.
+  const LR = R * 0.34;
+  const lg = ctx.createRadialGradient(cx, cy - LR * 0.25, 4, cx, cy, LR);
+  lg.addColorStop(0,   '#edb545');
+  lg.addColorStop(0.5, '#d8902a');
+  lg.addColorStop(1,   '#b8720a');
+  ctx.fillStyle = lg;
+  ctx.beginPath(); ctx.arc(cx, cy, LR, 0, Math.PI * 2); ctx.fill();
+
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, LR, 0, Math.PI * 2); ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, LR - 5, 0, Math.PI * 2); ctx.stroke();
+
+  // Clip all label text to within the label circle.
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, LR - 2, 0, Math.PI * 2); ctx.clip();
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+
+  const dw = LR * 0.52;
+
+  // "N T S" — record label name, spaced caps (matches app-wide uppercase style).
+  ctx.fillStyle = 'rgba(25,8,0,0.52)';
+  ctx.font = '400 8.5px Georgia, serif';
+  ctx.fillText('N T S', cx, cy - 64);
+
+  // Divider below label name.
+  ctx.strokeStyle = 'rgba(25,8,0,0.2)';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(cx - dw, cy - 53); ctx.lineTo(cx + dw, cy - 53);
+  ctx.stroke();
+
+  // Show title — italic, prominent.
+  ctx.fillStyle = 'rgba(18,5,0,0.88)';
+  ctx.font = 'italic 400 15px Georgia, serif';
+  ctx.shadowColor = 'rgba(0,0,0,0.18)';
+  ctx.shadowBlur = 2;
+  ctx.fillText('In Faith', cx, cy - 30);
+  ctx.shadowBlur = 0;
+
+  // Host line, split across spindle hole — upper half above, lower half below.
+  ctx.fillStyle = 'rgba(18,5,0,0.62)';
+  ctx.font = '400 8px Georgia, serif';
+  ctx.fillText('w/ Provhat', cx, cy - 13);
+
+  // [spindle hole sits at cy ± 8px — text resumes below it]
+
+  ctx.fillText('& GoldTooth', cx, cy + 22);
+
+  // Divider above date.
+  ctx.strokeStyle = 'rgba(25,8,0,0.18)';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(cx - dw * 0.7, cy + 35); ctx.lineTo(cx + dw * 0.7, cy + 35);
+  ctx.stroke();
+
+  // Date.
+  ctx.fillStyle = 'rgba(18,5,0,0.46)';
+  ctx.font = '400 7.5px Georgia, serif';
+  ctx.fillText('15 Aug 2023', cx, cy + 50);
+
+  // Genres — spaced dots like the rest of the app.
+  ctx.fillStyle = 'rgba(18,5,0,0.32)';
+  ctx.font = '400 6.5px Georgia, serif';
+  ctx.fillText('Nasheed  \u00B7  Qawwali  \u00B7  Bhajan', cx, cy + 64);
+
+  ctx.restore();
+
+  // Spindle hole — drawn on top so it punches cleanly through the label.
+  ctx.fillStyle = '#0b0b0d';
+  ctx.beginPath(); ctx.arc(cx, cy, R * 0.03, 0, Math.PI * 2); ctx.fill();
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.anisotropy = MAX_ANISO;
+  return tex;
+}
+
 // Vinyl crate exhibit — triggered by floater 3 (the pink torus).
 // Open/Close: the whole crateGroup scales from 0.04 → 1 (CRATE_OPEN_DUR) and back (CRATE_CLOSE_DUR)
 // with a smoothstep curve. The group also bobs on Y: sin(t*1.4)*0.03.
 const VINYL = {
   floaterIdx: 3,
+  records: [{ imagePath: 'images/infaith/in%20faith%20goldtooth.jpeg' }],
+  discTex:   null,
+  blankTex:  null,
   crateWoodV: null,
   crateWoodH: null,
   _built: false,
 };
 
+function _loadRecordTex(path) {
+  const tex = _texLoader.load(path, function(t) {
+    const aspect = t.image.width / t.image.height;
+    if (aspect > 1) {
+      tex.repeat.set(1 / aspect, 1);
+      tex.offset.set(0.5 * (1 - 1 / aspect), 0);
+    } else {
+      tex.repeat.set(1, aspect);
+      tex.offset.set(0, 0.5 * (1 - aspect));
+    }
+    tex.needsUpdate = true;
+  });
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
 function _buildVinylAssets() {
   if (VINYL._built) return;
   VINYL._built = true;
+  const blankTex = makeVinylBlankSleeveTex();
+  VINYL.blankTex = blankTex;
+  VINYL.records.forEach(r => {
+    r.coverTex = r.imagePath ? _loadRecordTex(r.imagePath) : blankTex;
+    r.backTex = blankTex;
+  });
+  VINYL.discTex = makeVinylDiscTex();
   VINYL.crateWoodV = makeCrateWoodTextures('v');
   VINYL.crateWoodH = makeCrateWoodTextures('h');
 }
@@ -1541,16 +1684,34 @@ let crateOpen  = false;
 let cratePhase = null;  // 'opening' | 'browsing' | 'closing' | null
 let crateT     = 0;
 let crateGroup = null;
-let _crateBackWas = false;
+let _crateSelGrp    = null;   // the record currently raised (disc peeking)
+let _crateSeatedGrp = null;   // the next record sitting lower behind it
+let crateSwapPhase  = null;   // null | 'swapping'
+let crateSwapT      = 0;
+const CRATE_SWAP_DUR = 0.88;
+
+// ── CRATE DISC FOCUS STATE (mirrors the exhibit carousel focus interactor) ──
+let crateFocusPhase   = null;   // 'focusing' | 'focused' | 'unfocusing'
+let crateFocusT       = 0;
+let crateFocusMesh    = null;   // temporary disc plane lifted into the scene
+let crateFocusDiscRef = null;   // the in-crate disc hidden while focused
+const CRATE_FOCUS_DUR = 0.6;
 
 const CRATE_OPEN_DUR     = 0.5;
 const CRATE_CLOSE_DUR    = 0.35;
 const RECORD_SIZE        = 2.65;  // governs crate inner dimensions
+const RECORD_THICK       = 0.088;
+const RECORD_BASE_Y      = RECORD_SIZE * 0.54;  // sleeve bottom at front wall top — full sleeve visible, no interior gap
+const DISC_PEEK          = RECORD_SIZE * 0.5;  // disc centre at sleeve top edge — half visible
 const CRATE_DIST         = 3.2;   // distance in front of player
-const CRATE_Y            = 1.05;  // crate group height off the floor
+const CRATE_Y            = 1.1;   // crate group height off the floor
 const CRATE_WALL_THICK   = 0.13;  // plank thickness for walls, rails, and corner posts
 const CRATE_BOTTOM_THICK = 0.12;  // solid floor slab
 const _crateFwd = new THREE.Vector3();
+const _crateDiscPos   = new THREE.Vector3();
+const _crateDiscQuat  = new THREE.Quaternion();
+const _crateDiscScale = new THREE.Vector3();
+const CRATE_DISC_R = RECORD_SIZE * 0.46;
 
 // ══════════════════════════════════════════
 //  INPUT
@@ -1581,8 +1742,6 @@ renderer.domElement.addEventListener('touchstart', e => {
     }
 });
 renderer.domElement.addEventListener('touchmove', e => {
-  // Block camera rotation while the crate is open.
-  if (crateOpen) return;
   if (exhibitPhase === 'open') {
     if (exhibitFocusPhase === 'focused') {
       for (const t of e.changedTouches) {
@@ -1852,8 +2011,19 @@ function _tickTutPreview() {
   _tutPreview.renderer.render(_tutPreview.scene, _tutPreview.camera);
 }
 
-// Start tutorial after short delay
-setTimeout(() => _tutShow(0), 900);
+// Direct-link shortcut: ?goto=crate skips tutorial and teleports to the vinyl crate
+const _PARAMS = new URLSearchParams(location.search);
+if (_PARAMS.get('goto') === 'crate') {
+  _tutOverlay.style.opacity = '0';
+  tutStage = 5;
+  _tutGuideDot.classList.remove('visible');
+  roomRevealed = true;
+  const _cf = floaterData[VINYL.floaterIdx];
+  player.position.set(_cf.pos[0], 0, _cf.pos[2] + 3);
+  yaw = Math.PI;
+} else {
+  setTimeout(() => _tutShow(0), 900);
+}
 
 // ══════════════════════════════════════════
 //  PARTICLE TRAIL
@@ -2147,8 +2317,10 @@ function _leaveExhibitRadius() {
     _restoreExhibitFloater();
   } else if (cratePhase && cratePhase !== 'closing') {
     _hideFocusEscapeHint();
-    if (_elCrateBack) _elCrateBack.classList.remove('visible');
+    if (_elCratePrev) _elCratePrev.classList.remove('visible');
+    if (_elCrateNext) _elCrateNext.classList.remove('visible');
     cratePhase = 'closing';
+    crateSwapPhase = null;
     crateT = 1;
     _restoreExhibitFloater();
   }
@@ -2312,6 +2484,100 @@ function _buildCrateBox() {
   return g;
 }
 
+function _buildCrateRecord(rec) {
+  const grp = new THREE.Group();
+
+  const edgeMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.8, metalness: 0.0 });
+  const coverMat = new THREE.MeshBasicMaterial({ map: rec.coverTex });
+  const backMat  = new THREE.MeshBasicMaterial({ map: rec.backTex });
+  const sleeveGeo = new THREE.BoxGeometry(RECORD_SIZE, RECORD_SIZE, RECORD_THICK);
+  const sleeve = new THREE.Mesh(sleeveGeo, [edgeMat, edgeMat, edgeMat, edgeMat, coverMat, backMat]);
+  grp.add(sleeve);
+
+  const discGeo = new THREE.CircleGeometry(RECORD_SIZE * 0.46, 48);
+  const discMat = new THREE.MeshBasicMaterial({ map: VINYL.discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
+  const disc = new THREE.Mesh(discGeo, discMat);
+  disc.position.set(0, DISC_PEEK, -RECORD_THICK * 0.5 - 0.002);
+  grp.add(disc);
+
+  grp.userData = { sleeve, disc, sleeveGeo, discGeo, mats: [edgeMat, coverMat, backMat, discMat] };
+  return grp;
+}
+
+// Next record in the crate — blank sleeve, disc starts inside (y=0, hidden), ready to animate up.
+function _buildCrateSeatedRecord() {
+  const grp = new THREE.Group();
+  const edgeMat  = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.8, metalness: 0.0 });
+  const coverMat = new THREE.MeshBasicMaterial({ map: VINYL.blankTex });
+  const backMat  = new THREE.MeshBasicMaterial({ map: VINYL.blankTex });
+  const sleeveGeo = new THREE.BoxGeometry(RECORD_SIZE, RECORD_SIZE, RECORD_THICK);
+  const sleeve = new THREE.Mesh(sleeveGeo, [edgeMat, edgeMat, edgeMat, edgeMat, coverMat, backMat]);
+  grp.add(sleeve);
+  const discGeo = new THREE.CircleGeometry(RECORD_SIZE * 0.46, 48);
+  const discMat = new THREE.MeshBasicMaterial({ map: VINYL.discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
+  const disc = new THREE.Mesh(discGeo, discMat);
+  disc.position.set(0, 0, -RECORD_THICK * 0.5 - 0.002);
+  grp.add(disc);
+  grp.userData = { sleeve, disc, sleeveGeo, discGeo, mats: [edgeMat, coverMat, backMat, discMat] };
+  return grp;
+}
+
+function _startCrateSwap() {
+  if (!crateGroup || crateSwapPhase || cratePhase !== 'browsing') return;
+  if (!_crateSelGrp || !_crateSeatedGrp) return;
+  crateSwapPhase = 'swapping';
+  crateSwapT = 0;
+  if (_elCratePrev) _elCratePrev.classList.remove('visible');
+  if (_elCrateNext) _elCrateNext.classList.remove('visible');
+}
+
+function _tickCrateSwap(dt) {
+  if (!crateSwapPhase || !crateGroup) return;
+  crateSwapT += dt / CRATE_SWAP_DUR;
+  const t = Math.min(1, crateSwapT);
+
+  const sel = _crateSelGrp;
+  const sat = _crateSeatedGrp;
+
+  // Each record keeps its place in line (its z depth) for the whole swap — they
+  // only ever move vertically. The records simply trade heights.
+  const LOW_Y = RECORD_SIZE * 0.14;
+
+  function eio(x) { return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2; }
+  function seg(v, s, e) { return eio(Math.max(0, Math.min(1, (v - s) / (e - s)))); }
+
+  const ezDisc = seg(t, 0,    0.25);  // selected disc slides into its sleeve
+  const ezDrop = seg(t, 0.10, 0.65);  // selected record sinks down in place
+  const ezRise = seg(t, 0.30, 0.85);  // seated record lifts up in place (stays behind)
+  const ezLift = seg(t, 0.55, 1.0);   // seated disc lifts above sleeve
+
+  // Selected disc closes.
+  if (sel && sel.userData.disc) sel.userData.disc.position.y = DISC_PEEK * (1 - ezDisc);
+
+  // Selected record sinks straight down — z never changes, it stays in its place in line.
+  if (sel) sel.position.y = RECORD_BASE_Y + (LOW_Y - RECORD_BASE_Y) * ezDrop;
+
+  // Seated record lifts straight up behind — z never changes, it stays in its place in line.
+  if (sat) sat.position.y = LOW_Y + (RECORD_BASE_Y - LOW_Y) * ezRise;
+
+  // Seated disc lifts.
+  if (sat && sat.userData.disc) sat.userData.disc.position.y = DISC_PEEK * ezLift;
+
+  if (crateSwapT >= 1) {
+    crateSwapPhase = null;
+    crateSwapT = 0;
+    // Snap to exact resting heights (z is left untouched — each record keeps its place in line).
+    if (sel) sel.position.y = RECORD_SIZE * 0.14;
+    if (sat) sat.position.y = RECORD_BASE_Y;
+    if (sel && sel.userData.disc) sel.userData.disc.position.y = 0;
+    if (sat && sat.userData.disc) sat.userData.disc.position.y = DISC_PEEK;
+    _crateSelGrp    = sat;
+    _crateSeatedGrp = sel;
+    if (_elCratePrev) _elCratePrev.classList.add('visible');
+    if (_elCrateNext) _elCrateNext.classList.add('visible');
+  }
+}
+
 function _openCrate(px, pz, openYaw) {
   if (cratePhase || exhibitPhase) return;
   _buildVinylAssets();
@@ -2333,6 +2599,21 @@ function _openCrate(px, pz, openYaw) {
 
   const box = _buildCrateBox();
   crateGroup.add(box);
+
+  _crateSelGrp    = null;
+  _crateSeatedGrp = null;
+  VINYL.records.forEach(rec => {
+    const seated = _buildCrateSeatedRecord();
+    seated.position.set(0, RECORD_SIZE * 0.14, -RECORD_SIZE * 0.12);
+    crateGroup.add(seated);
+    if (!_crateSeatedGrp) _crateSeatedGrp = seated;
+
+    const grp = _buildCrateRecord(rec);
+    grp.position.set(0, RECORD_BASE_Y, 0);
+    crateGroup.add(grp);
+    if (!_crateSelGrp) _crateSelGrp = grp;
+  });
+
   crateGroup.scale.setScalar(0.04);
 }
 
@@ -2346,29 +2627,153 @@ function _disposeCrateObject(obj) {
   });
 }
 
+// ── CRATE DISC FOCUS — brings the selected record's disc forward to fill the
+//    viewport, reusing the exhibit carousel's focus maths and escape hint. ──
+function _discWorldTransform(disc) {
+  disc.updateWorldMatrix(true, false);
+  disc.matrixWorld.decompose(_crateDiscPos, _crateDiscQuat, _crateDiscScale);
+}
+
+function _getAimedCrateDisc() {
+  if (!_crateSelGrp || cratePhase !== 'browsing' || crateSwapPhase || crateFocusPhase) return null;
+  const disc = _crateSelGrp.userData.disc;
+  if (!disc || !disc.visible) return null;
+  // Direct hit if the reticle is right on the disc.
+  _raycaster.setFromCamera(_ndcCenter, camera);
+  if (_raycaster.intersectObject(disc, false).length) return disc;
+  // Otherwise lock on whenever the disc is on screen in front of the player —
+  // the fixed camera pitch keeps it high in the frame, so a centred raycast
+  // alone would rarely connect (mirrors the carousel's nearest-to-centre aim).
+  disc.getWorldPosition(_panelWp);
+  _panelWp.project(camera);
+  if (_panelWp.z > 1) return null;
+  return (Math.abs(_panelWp.x) < 0.6 && _panelWp.y > -0.9 && _panelWp.y < 0.97) ? disc : null;
+}
+
+function _refreshCrateFocusTarget() {
+  const D = CRATE_DISC_R * 2;
+  _focusToScale = _computeExhibitFocusTarget(_focusToPos, _focusToQuat, D, D);
+}
+
+function _startCrateFocus(disc) {
+  if (!disc || crateFocusPhase || cratePhase !== 'browsing' || crateSwapPhase) return;
+  _syncCamera();
+  _discWorldTransform(disc);
+
+  const geo = new THREE.CircleGeometry(CRATE_DISC_R, 64);
+  const mat = new THREE.MeshBasicMaterial({ map: VINYL.discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
+  crateFocusMesh = new THREE.Mesh(geo, mat);
+  crateFocusMesh.renderOrder = 250;
+  crateFocusMesh.position.copy(_crateDiscPos);
+  crateFocusMesh.quaternion.copy(_crateDiscQuat);
+  crateFocusMesh.scale.setScalar(_crateDiscScale.x);
+  scene.add(crateFocusMesh);
+
+  crateFocusDiscRef = disc;
+  disc.visible = false;
+
+  _focusFromPos.copy(_crateDiscPos);
+  _focusFromQuat.copy(_crateDiscQuat);
+  _focusFromScale = _crateDiscScale.x;
+  _refreshCrateFocusTarget();
+
+  crateFocusPhase = 'focusing';
+  crateFocusT = 0;
+  _hideFocusEscapeHint();
+  if (_elCratePrev) _elCratePrev.classList.remove('visible');
+  if (_elCrateNext) _elCrateNext.classList.remove('visible');
+}
+
+function _startCrateUnfocus() {
+  if (crateFocusPhase !== 'focused' || !crateFocusMesh) return;
+  _hideFocusEscapeHint();
+  _focusFromPos.copy(crateFocusMesh.position);
+  _focusFromQuat.copy(crateFocusMesh.quaternion);
+  _focusFromScale = crateFocusMesh.scale.x;
+  crateFocusPhase = 'unfocusing';
+  crateFocusT = 0;
+}
+
+function _disposeCrateFocusMesh() {
+  if (crateFocusDiscRef) crateFocusDiscRef.visible = true;
+  if (crateFocusMesh) {
+    scene.remove(crateFocusMesh);
+    crateFocusMesh.geometry.dispose();
+    crateFocusMesh.material.dispose();
+    crateFocusMesh = null;
+  }
+  crateFocusDiscRef = null;
+}
+
+function _finishCrateUnfocus() {
+  _disposeCrateFocusMesh();
+  crateFocusPhase = null;
+  crateFocusT = 0;
+  if (cratePhase === 'browsing' && !crateSwapPhase) {
+    if (_elCratePrev) _elCratePrev.classList.add('visible');
+    if (_elCrateNext) _elCrateNext.classList.add('visible');
+  }
+  iCD = 0.3;
+}
+
+function _resetCrateFocus() {
+  _disposeCrateFocusMesh();
+  crateFocusPhase = null;
+  crateFocusT = 0;
+}
+
+function _tickCrateFocus(dt) {
+  if (!crateFocusPhase || !crateFocusMesh) return;
+  if (crateFocusPhase === 'focusing') {
+    _refreshCrateFocusTarget();
+    crateFocusT = Math.min(1, crateFocusT + dt / CRATE_FOCUS_DUR);
+    const s = crateFocusT * crateFocusT * (3 - 2 * crateFocusT);
+    crateFocusMesh.position.lerpVectors(_focusFromPos, _focusToPos, s);
+    _focusLerpQuat.slerpQuaternions(_focusFromQuat, _focusToQuat, s);
+    crateFocusMesh.quaternion.copy(_focusLerpQuat);
+    crateFocusMesh.scale.setScalar(_focusFromScale + (_focusToScale - _focusFromScale) * s);
+    if (crateFocusT >= 1) { crateFocusPhase = 'focused'; _showFocusEscapeHint(); }
+  } else if (crateFocusPhase === 'focused') {
+    _refreshCrateFocusTarget();
+    crateFocusMesh.position.copy(_focusToPos);
+    crateFocusMesh.quaternion.copy(_focusToQuat);
+    crateFocusMesh.scale.setScalar(_focusToScale);
+  } else if (crateFocusPhase === 'unfocusing') {
+    crateFocusT = Math.min(1, crateFocusT + dt / CRATE_FOCUS_DUR);
+    const s = crateFocusT * crateFocusT * (3 - 2 * crateFocusT);
+    if (crateFocusDiscRef) _discWorldTransform(crateFocusDiscRef);
+    crateFocusMesh.position.lerpVectors(_focusFromPos, _crateDiscPos, s);
+    _focusLerpQuat.slerpQuaternions(_focusFromQuat, _crateDiscQuat, s);
+    crateFocusMesh.quaternion.copy(_focusLerpQuat);
+    crateFocusMesh.scale.setScalar(_focusFromScale + (_crateDiscScale.x - _focusFromScale) * s);
+    if (crateFocusT >= 1) _finishCrateUnfocus();
+  }
+}
+
 function _closeCrate() {
+  _resetCrateFocus();
   if (crateGroup) {
     _disposeCrateObject(crateGroup);
     scene.remove(crateGroup);
     crateGroup = null;
   }
-  crateOpen  = false;
-  cratePhase = null;
-  crateT     = 0;
+  crateOpen       = false;
+  cratePhase      = null;
+  crateT          = 0;
+  crateSwapPhase  = null;
+  crateSwapT      = 0;
+  _crateSelGrp    = null;
+  _crateSeatedGrp = null;
   _hideFocusEscapeHint();
-  if (_elCrateBack) _elCrateBack.classList.remove('visible');
+  if (_elCratePrev) _elCratePrev.classList.remove('visible');
+  if (_elCrateNext) _elCrateNext.classList.remove('visible');
+  _elMmWrap.classList.remove('focus-hidden');
+  _elUi?.classList.remove('focus-hidden');
+  _jZone.classList.remove('focus-hidden');
   curDPR = _savedDPR;
   _applyDPR();
   _restoreExhibitFloater();
   iCD = 0.6;
-}
-
-function _crateStartClose() {
-  if (cratePhase !== 'browsing') return;
-  _hideFocusEscapeHint();
-  cratePhase = 'closing';
-  crateT = 1;
-  _restoreExhibitFloater();
 }
 
 // Mobile frame-rate governor (caps to 60fps on high-refresh devices)
@@ -2402,7 +2807,8 @@ const _elAimReticle  = document.getElementById('aim-reticle');
 const _elUi               = document.getElementById('ui');
 const _elMmWrap           = document.getElementById('minimap-wrap');
 const _elFocusEscapeHint  = document.getElementById('focus-escape-hint');
-const _elCrateBack   = document.getElementById('crate-back-btn');
+const _elCratePrev   = document.getElementById('crate-prev-btn');
+const _elCrateNext   = document.getElementById('crate-next-btn');
 const _elExhibitPrev = document.getElementById('exhibit-prev');
 const _elExhibitNext = document.getElementById('exhibit-next');
 let   _focusEscapeTimer = null;
@@ -2422,10 +2828,15 @@ function _hideFocusEscapeHint() {
   _elFocusEscapeHint.classList.remove('visible', 'dim');
 }
 
-if (_elCrateBack) {
-  const _crateBackFire = e => { e.preventDefault(); e.stopPropagation(); _crateStartClose(); };
-  _elCrateBack.addEventListener('click', _crateBackFire);
-  _elCrateBack.addEventListener('touchstart', _crateBackFire, { passive: false });
+if (_elCratePrev) {
+  const _cratePrevFire = e => { e.preventDefault(); e.stopPropagation(); _startCrateSwap(); };
+  _elCratePrev.addEventListener('click', _cratePrevFire);
+  _elCratePrev.addEventListener('touchstart', _cratePrevFire, { passive: false });
+}
+if (_elCrateNext) {
+  const _crateNextFire = e => { e.preventDefault(); e.stopPropagation(); _startCrateSwap(); };
+  _elCrateNext.addEventListener('click', _crateNextFire);
+  _elCrateNext.addEventListener('touchstart', _crateNextFire, { passive: false });
 }
 
 const _exhibitNavFire = (dir, e) => {
@@ -2476,8 +2887,11 @@ function animate() {
   _rgt.set(-Math.cos(yaw), 0, Math.sin(yaw));
   let moving = false;
   const _exhibitLocked = exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' || exhibitFocusPhase === 'switching';
-  // The crate is a focused interaction — freeze movement and turning while it is open.
-  const _inputLocked = _exhibitLocked || crateOpen;
+  // The crate stays open while browsing — the visitor roams freely and simply
+  // walks out of range to dismiss it, just like the other exhibitions. Movement
+  // freezes only while a disc is held in focus so it stays centred.
+  const _crateLocked = crateFocusPhase === 'focusing' || crateFocusPhase === 'focused';
+  const _inputLocked = _exhibitLocked || _crateLocked;
 
   // Arrow keys rotate camera — frozen while reading a focused panel / crate
   if (!_inputLocked) {
@@ -2511,7 +2925,8 @@ function animate() {
   // Room reveal — progress from 0 (dark) to 1 (fully lit) after first interaction
   if (roomRevealed && revealT < 1) revealT = Math.min(1, revealT + dt * 0.32);
   const _rSmooth = revealT * revealT * (3 - 2 * revealT); // smoothstep
-  const _wantFocusDim = exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' || exhibitFocusPhase === 'switching' ? 1 : 0;
+  const _wantFocusDim = (exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' || exhibitFocusPhase === 'switching'
+                         || crateFocusPhase === 'focusing' || crateFocusPhase === 'focused') ? 1 : 0;
   focusDimT += (_wantFocusDim - focusDimT) * Math.min(1, dt * 5.5);
   const _roomLight = _rSmooth * (1 - focusDimT * 0.94);
   ambientLight.intensity    = _roomLight * 0.15;
@@ -2625,6 +3040,9 @@ function animate() {
   const exhibitAimedIdx = exhibitAimable ? _getAimedExhibitPanelIdx() : -1;
   let exhibitCanFocus = exhibitAimedIdx >= 0;
 
+  const crateAimedDisc = _getAimedCrateDisc();
+  const crateCanFocus  = !!crateAimedDisc;
+
   // Proximity prompt — project above the near object (hidden while exhibit is open)
   if (near.ref && tutStage >= 3 && iCD <= 0 && !exhibitOpen && !crateOpen && !_elToast.classList.contains('visible')) {
     const _wp = new THREE.Vector3();
@@ -2676,6 +3094,32 @@ function animate() {
       _elAimReticle.classList.remove('locked');
       _elPrompt.classList.remove('visible');
     }
+  } else if (cratePhase === 'browsing' && !crateFocusPhase) {
+    // Crate disc aim reticle — locks onto the raised record's disc
+    if (crateCanFocus) {
+      crateAimedDisc.getWorldPosition(_panelWp);
+      _panelWp.project(camera);
+      const rx = (_panelWp.x * 0.5 + 0.5) * window.innerWidth;
+      const ry = (-_panelWp.y * 0.5 + 0.5) * window.innerHeight;
+      _elAimReticle.style.left = rx + 'px';
+      _elAimReticle.style.top  = ry + 'px';
+      _elAimReticle.classList.add('visible');
+      _elAimReticle.classList.add('locked');
+      _elPrompt.style.left = rx + 'px';
+      _elPrompt.style.top  = (ry - 36) + 'px';
+      _elIprLabel.textContent = isMobile ? 'tap to focus' : 'focus';
+      const iconEl = _elIprIcon;
+      if (isMobile) {
+        iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="16" height="16"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="rgba(255,180,60,0.35)"/></svg>`;
+      } else {
+        iconEl.innerHTML = `<span style="font-family:Georgia,serif;font-size:9px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
+      }
+      _elPrompt.classList.add('visible');
+    } else {
+      _elAimReticle.classList.remove('visible');
+      _elAimReticle.classList.remove('locked');
+      _elPrompt.classList.remove('visible');
+    }
   } else {
     _elAimReticle.classList.remove('visible');
     _elAimReticle.classList.remove('locked');
@@ -2691,14 +3135,6 @@ function animate() {
   } else {
     _exhibitNavLWas = false; _exhibitNavRWas = false;
   }
-
-  // ── CRATE CLOSE (Esc or B) ──
-  const _crateBackKey = !!(keys['Escape'] || keys['KeyB']);
-  if (crateOpen && iCD <= 0 && _crateBackKey && !_crateBackWas) {
-    _crateStartClose();
-    iCD = 0.35;
-  }
-  _crateBackWas = _crateBackKey;
 
   // Dismiss exhibition — only when orbiting and nothing is aimed
   if (eDown && !eWas && exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) {
@@ -2718,11 +3154,22 @@ function animate() {
     _startExhibitUnfocus();
     _elPrompt.classList.remove('visible');
     iCD = 0.35;
+  // Bring the aimed record disc into focus
+  } else if (eDown && !eWas && crateCanFocus && iCD <= 0) {
+    _startCrateFocus(crateAimedDisc);
+    _elPrompt.classList.remove('visible');
+    _elAimReticle.classList.remove('visible', 'locked');
+    iCD = 0.35;
+  // Return the focused disc to the crate
+  } else if (eDown && !eWas && crateFocusPhase === 'focused' && iCD <= 0) {
+    _startCrateUnfocus();
+    _elPrompt.classList.remove('visible');
+    iCD = 0.35;
   // Normal floater interaction
   } else if(eDown&&!eWas&&near.ref&&iCD<=0){
     const f=near.ref;
     const ex = _exhibitByFloater.get(f);
-    if (ex && !exhibitPhase) {
+    if (ex && !exhibitPhase && !cratePhase) {
       _openExhibit(ex, player.position.x, player.position.z, yaw);
       iCD = 0.5;
     } else if (f === _crateFloater && !cratePhase && !exhibitPhase) {
@@ -2905,7 +3352,11 @@ function animate() {
       crateT = Math.min(1, crateT + dt / CRATE_OPEN_DUR);
       const s = crateT * crateT * (3 - 2 * crateT);
       if (crateGroup) crateGroup.scale.setScalar(0.04 + s * 0.96);
-      if (crateT >= 1) cratePhase = 'browsing';
+      if (crateT >= 1) {
+        cratePhase = 'browsing';
+        if (_elCratePrev) _elCratePrev.classList.add('visible');
+        if (_elCrateNext) _elCrateNext.classList.add('visible');
+      }
     } else if (cratePhase === 'closing') {
       crateT = Math.max(0, crateT - dt / CRATE_CLOSE_DUR);
       const s = crateT * crateT * (3 - 2 * crateT);
@@ -2916,9 +3367,18 @@ function animate() {
     if (crateGroup) {
       crateGroup.position.y = CRATE_Y + Math.sin(t * 1.4) * 0.03;
     }
+
+    // Hide the HUD while a disc is held in focus, just like the carousel
+    const _crateFocusUIHidden = crateFocusPhase === 'focusing' || crateFocusPhase === 'focused';
+    _elMmWrap.classList.toggle('focus-hidden', _crateFocusUIHidden);
+    _elUi?.classList.toggle('focus-hidden', _crateFocusUIHidden);
+    _jZone.classList.toggle('focus-hidden', _crateFocusUIHidden);
   }
 
-  _elKeySpace.classList.toggle('active', !!(near.ref && !exhibitOpen && !crateOpen) || exhibitCanFocus || exhibitFocusPhase === 'focused');
+  _tickCrateSwap(dt);
+  _tickCrateFocus(dt);
+
+  _elKeySpace.classList.toggle('active', !!(near.ref && !exhibitOpen && !crateOpen) || exhibitCanFocus || exhibitFocusPhase === 'focused' || crateCanFocus || crateFocusPhase === 'focused');
 
   renderer.render(scene, camera);
   _tickTutPreview();
