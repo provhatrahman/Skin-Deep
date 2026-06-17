@@ -476,7 +476,7 @@
 </div>
 <div id="aim-reticle"></div>
 <div id="focus-escape-hint"></div>
-<div id="crate-browse-hint"><span class="cbh-keys"><span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">browse records</span></div>
+<div id="crate-browse-hint"><span class="cbh-keys"><span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">browse records</span><span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span><span class="feh-key">esc</span><span class="feh-label">close</span></div>
 <div id="crate-sc-embed">
   <iframe id="crate-sc-iframe" width="100%" height="300" scrolling="no" frameborder="no" allow="autoplay; encrypted-media"></iframe>
   <div id="crate-sc-credit"><a href="https://soundcloud.com/user-612196404" title="NTS 2023" target="_blank">NTS 2023</a> &middot; <a href="https://soundcloud.com/user-612196404/in-faith-w-provhat-goldtooth" title="In Faith w/ Provhat &amp; GoldTooth 150823" target="_blank">In Faith w/ Provhat &amp; GoldTooth 150823</a></div>
@@ -1894,6 +1894,7 @@ const keys = {};
 const keyUIMap = { KeyW:'key-w', KeyA:'key-a', KeyS:'key-s', KeyD:'key-d', ArrowLeft:'key-left', ArrowRight:'key-right', Space:'key-space' };
 document.addEventListener('keydown', e => {
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown') e.preventDefault();
+  if (!isMobile && e.code === 'Escape' && (exhibitPhase || cratePhase)) e.preventDefault();
   keys[e.code] = true;
   if (keyUIMap[e.code]) document.getElementById(keyUIMap[e.code])?.classList.add('active');
 });
@@ -2229,7 +2230,7 @@ function tickP(dt) {
 // ══════════════════════════════════════════
 const clock = new THREE.Clock();
 const SPEED=4.2, BOUND=15;
-let eWas=false, iCD=0;
+let eWas=false, escWas=false, iCD=0;
 const near={ref:null,dist:Infinity};
 const _fwd = new THREE.Vector3();
 const _rgt = new THREE.Vector3();
@@ -2369,7 +2370,7 @@ function _showExhibitFocusNav() {
 function _showExhibitHint() {
   _elFocusEscapeHint.innerHTML = isMobile
     ? `<span class="feh-label">tap to focus</span>`
-    : `<span class="feh-key">spc</span><span class="feh-label">focus</span><span class="feh-key">spc</span><span class="feh-label">close</span>`;
+    : `<span class="feh-key">spc</span><span class="feh-label">focus</span><span class="feh-key">esc</span><span class="feh-label">close</span>`;
   _elFocusEscapeHint.classList.remove('dim');
   _elFocusEscapeHint.classList.add('visible');
   clearTimeout(_focusEscapeTimer);
@@ -3099,7 +3100,7 @@ let   _focusEscapeTimer = null;
 function _showFocusEscapeHint() {
   _elFocusEscapeHint.innerHTML = isMobile
     ? `<span class="feh-label">tap to return</span>`
-    : `<span class="feh-key">spc</span><span class="feh-label">back</span>`;
+    : `<span class="feh-key">esc</span><span class="feh-label">back</span>`;
   _elFocusEscapeHint.classList.remove('dim');
   _elFocusEscapeHint.classList.add('visible');
   clearTimeout(_focusEscapeTimer);
@@ -3116,7 +3117,7 @@ function _showExhibitFocusHints() {
     const browse = exhibitPanelN >= 2
       ? `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span></span><span class="feh-label">browse</span>${sep}`
       : '';
-    _elFocusEscapeHint.innerHTML = browse + `<span class="feh-key">spc</span><span class="feh-label">back</span>`;
+    _elFocusEscapeHint.innerHTML = browse + `<span class="feh-key">esc</span><span class="feh-label">back</span>`;
   }
   _elFocusEscapeHint.classList.remove('dim');
   _elFocusEscapeHint.classList.add('visible');
@@ -3332,8 +3333,9 @@ function animate() {
   // Auto-close exhibit/crate when player walks away from the trigger floater
   _leaveExhibitRadius();
 
-  // Interact
-  const eDown=keys['KeyE']||keys['Space'];
+  // Interact (Space / E) and dismiss (Escape — desktop only)
+  const eDown = keys['KeyE'] || keys['Space'];
+  const escDown = !isMobile && keys['Escape'];
 
   // Camera — sync early so raycasts and screen projections match the rendered view
   _syncCamera();
@@ -3449,14 +3451,33 @@ function animate() {
   } else {
     _crateNavUpWas = false; _crateNavDnWas = false;
   }
-  if (_elCrateBrowseHint) _elCrateBrowseHint.classList.toggle('visible', _crateBrowsable && !isMobile);
+  if (_elCrateBrowseHint) {
+    const _crateBrowseHintVisible = cratePhase === 'browsing' && !crateFocusPhase && !isMobile;
+    _elCrateBrowseHint.classList.toggle('visible', _crateBrowseHintVisible);
+    if (_crateBrowseHintVisible) {
+      const browseKeys = VINYL.records.length > 1
+        ? `<span class="cbh-keys"><span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">browse records</span><span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`
+        : '';
+      _elCrateBrowseHint.innerHTML = browseKeys + `<span class="feh-key">esc</span><span class="feh-label">close</span>`;
+    }
+  }
 
   // Dismiss exhibition — only when orbiting and nothing is aimed
-  if (eDown && !eWas && exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) {
+  if (escDown && !escWas && exhibitPhase === 'open' && !exhibitFocusPhase && !exhibitCanFocus) {
     exhibitPhase = 'closing';
     _hideExhibitNav();
     _hideFocusEscapeHint();
     exhibitPlanes.forEach(p => { p.mesh.visible = true; p.mesh.material.opacity = 1; });
+    _restoreExhibitFloater();
+    iCD = 0.3;
+  // Dismiss crate while browsing — only when nothing is aimed at a disc
+  } else if (escDown && !escWas && cratePhase === 'browsing' && !crateFocusPhase && !crateCanFocus) {
+    _hideFocusEscapeHint();
+    if (_elCratePrev) _elCratePrev.classList.remove('visible');
+    if (_elCrateNext) _elCrateNext.classList.remove('visible');
+    cratePhase = 'closing';
+    crateSwapPhase = null;
+    crateT = 1;
     _restoreExhibitFloater();
     iCD = 0.3;
   // Focus the panel under the reticle
@@ -3465,7 +3486,7 @@ function animate() {
     _elPrompt.classList.remove('visible');
     iCD = 0.35;
   // Return from focused view to the carousel
-  } else if (eDown && !eWas && exhibitFocusPhase === 'focused' && iCD <= 0) {
+  } else if (escDown && !escWas && exhibitFocusPhase === 'focused' && iCD <= 0) {
     _startExhibitUnfocus();
     _elPrompt.classList.remove('visible');
     iCD = 0.35;
@@ -3476,7 +3497,7 @@ function animate() {
     _elAimReticle.classList.remove('visible', 'locked');
     iCD = 0.35;
   // Return the focused disc to the crate
-  } else if (eDown && !eWas && crateFocusPhase === 'focused' && iCD <= 0) {
+  } else if (escDown && !escWas && crateFocusPhase === 'focused' && iCD <= 0) {
     _startCrateUnfocus();
     _elPrompt.classList.remove('visible');
     iCD = 0.35;
@@ -3509,6 +3530,7 @@ function animate() {
     }
   }
   eWas=eDown;
+  escWas=escDown;
   if(iCD>0)iCD-=dt;
 
   // Exhibition animation tick
@@ -3696,7 +3718,7 @@ function animate() {
   _tickCrateSwap(dt);
   _tickCrateFocus(dt);
 
-  _elKeySpace.classList.toggle('active', !!(near.ref && !exhibitOpen && !crateOpen) || exhibitCanFocus || exhibitFocusPhase === 'focused' || crateCanFocus || crateFocusPhase === 'focused');
+  _elKeySpace.classList.toggle('active', !!(near.ref && !exhibitOpen && !crateOpen) || exhibitCanFocus || crateCanFocus);
 
   renderer.render(scene, camera);
   _tickTutPreview();
