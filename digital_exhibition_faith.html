@@ -1162,8 +1162,12 @@ function makeVinylBlankSleeveTex() {
 }
 
 // Black vinyl disc — concentric grooves + centre label.
-// Label reads: NTS / "In Faith" / "w/ Provhat & GoldTooth" / "15 Aug 2023" / genres.
-function makeVinylDiscTex() {
+function makeVinylDiscTex(info) {
+  const title   = info.title   || 'In Faith';
+  const host1   = info.host1   || 'w/ Provhat';
+  const host2   = info.host2   ?? '& GoldTooth';
+  const date    = info.date    || '15 Aug 2023';
+  const genres  = info.genres  || 'Nasheed  \u00B7  Qawwali  \u00B7  Bhajan';
   // S is the logical layout size — every coordinate below stays in this space.
   // The canvas is supersampled (SS) so the label text stays crisp when the disc
   // is brought forward to fill the viewport in focus mode.
@@ -1232,20 +1236,20 @@ function makeVinylDiscTex() {
 
   // Show title — italic, prominent.
   ctx.fillStyle = 'rgba(18,5,0,0.88)';
-  ctx.font = 'italic 400 15px Georgia, serif';
+  ctx.font = title.length > 12 ? 'italic 400 12px Georgia, serif' : 'italic 400 15px Georgia, serif';
   ctx.shadowColor = 'rgba(0,0,0,0.18)';
   ctx.shadowBlur = 2;
-  ctx.fillText('In Faith', cx, cy - 30);
+  ctx.fillText(title, cx, cy - 30);
   ctx.shadowBlur = 0;
 
   // Host line, split across spindle hole — upper half above, lower half below.
   ctx.fillStyle = 'rgba(18,5,0,0.62)';
   ctx.font = '400 8px Georgia, serif';
-  ctx.fillText('w/ Provhat', cx, cy - 13);
+  ctx.fillText(host1, cx, cy - 13);
 
   // [spindle hole sits at cy ± 8px — text resumes below it]
 
-  ctx.fillText('& GoldTooth', cx, cy + 22);
+  if (host2) ctx.fillText(host2, cx, cy + 22);
 
   // Divider above date.
   ctx.strokeStyle = 'rgba(25,8,0,0.18)';
@@ -1257,12 +1261,12 @@ function makeVinylDiscTex() {
   // Date.
   ctx.fillStyle = 'rgba(18,5,0,0.46)';
   ctx.font = '400 7.5px Georgia, serif';
-  ctx.fillText('15 Aug 2023', cx, cy + 50);
+  ctx.fillText(date, cx, cy + 50);
 
   // Genres — spaced dots like the rest of the app.
   ctx.fillStyle = 'rgba(18,5,0,0.32)';
   ctx.font = '400 6.5px Georgia, serif';
-  ctx.fillText('Nasheed  \u00B7  Qawwali  \u00B7  Bhajan', cx, cy + 64);
+  ctx.fillText(genres, cx, cy + 64);
 
   ctx.restore();
 
@@ -1283,8 +1287,60 @@ const VINYL = {
   records: [{
     imagePath: 'images/infaith/in%20faith%20goldtooth.jpeg',
     soundcloud: 'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/soundcloud%253Atracks%253A1594421781&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true&visual=true',
+    creditUser: 'https://soundcloud.com/user-612196404',
+    creditUserLabel: 'NTS 2023',
+    creditTrack: 'https://soundcloud.com/user-612196404/in-faith-w-provhat-goldtooth',
+    creditTrackLabel: 'In Faith w/ Provhat & GoldTooth 150823',
+    disc: {
+      title: 'In Faith',
+      host1: 'w/ Provhat',
+      host2: '& GoldTooth',
+      date: '15 Aug 2023',
+      genres: 'Nasheed  \u00B7  Qawwali  \u00B7  Bhajan',
+    },
+  }, {
+    imagePath: 'images/infaith/nasheeds.png',
+    soundcloud: 'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/soundcloud%253Atracks%253A1497537766&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true&visual=true',
+    creditUser: 'https://soundcloud.com/user-543006032',
+    creditUserLabel: 'NTS Friday',
+    creditTrack: 'https://soundcloud.com/user-543006032/nasheeds-naats-w-provhat-200423',
+    creditTrackLabel: 'Nasheeds & Naats w/ Provhat 200423',
+    disc: {
+      title: 'Nasheeds & Naats',
+      host1: 'w/ Provhat',
+      host2: '',
+      date: '20 Apr 2023',
+      genres: 'Arabic Traditional',
+    },
+  }, {
+    imagePath: 'images/infaith/guide.jpeg',
+    soundcloud: 'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/soundcloud%253Atracks%253A1855726125&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true&visual=true',
+    creditUser: 'https://soundcloud.com/user-643553014',
+    creditUserLabel: 'NTS 2024-2025',
+    creditTrack: 'https://soundcloud.com/user-643553014/songs-of-praise-guide-to-the',
+    creditTrackLabel: 'Songs of Praise: Guide to The Modern Nasheed w/ Provhat 230624',
+    disc: {
+      title: 'Songs of Praise',
+      host1: 'w/ Provhat',
+      host2: '',
+      date: '23 Jun 2024',
+      genres: 'Modern Nasheed',
+    },
+  }, {
+    imagePath: 'images/infaith/in%20faith%202.jpg',
+    soundcloud: 'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/soundcloud%253Atracks%253A1834815909&color=%23ff5500&auto_play=false&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true&visual=true',
+    creditUser: 'https://soundcloud.com/user-643553014',
+    creditUserLabel: 'NTS 2024-2025',
+    creditTrack: 'https://soundcloud.com/user-643553014/in-faith-w-provhat-iti-300524',
+    creditTrackLabel: 'In Faith w/ Provhat & Iti 300524',
+    disc: {
+      title: 'In Faith',
+      host1: 'w/ Provhat',
+      host2: '& Iti',
+      date: '30 May 2024',
+      genres: 'Bhangra  \u00B7  Qawwali  \u00B7  Ghazal',
+    },
   }],
-  discTex:   null,
   blankTex:  null,
   crateWoodV: null,
   crateWoodH: null,
@@ -1318,8 +1374,8 @@ function _buildVinylAssets() {
   VINYL.records.forEach(r => {
     r.coverTex = r.imagePath ? _loadRecordTex(r.imagePath) : blankTex;
     r.backTex = blankTex;
+    r.discTex = makeVinylDiscTex(r.disc);
   });
-  VINYL.discTex = makeVinylDiscTex();
   VINYL.crateWoodV = makeCrateWoodTextures('v');
   VINYL.crateWoodH = makeCrateWoodTextures('h');
 }
@@ -1716,8 +1772,10 @@ let crateT     = 0;
 let crateGroup = null;
 let _crateSelGrp    = null;   // the record currently raised (disc peeking)
 let _crateSeatedGrp = null;   // the next record sitting lower behind it
+let _crateIdx       = 0;      // index into VINYL.records of the raised (front) record
 let crateSwapPhase  = null;   // null | 'swapping'
 let crateSwapT      = 0;
+let _crateSwapDir   = 1;      // +1 = step to next record, -1 = previous
 const CRATE_SWAP_DUR = 0.88;
 
 // ── CRATE DISC FOCUS STATE (mirrors the exhibit carousel focus interactor) ──
@@ -1733,6 +1791,8 @@ const CRATE_CLOSE_DUR    = 0.35;
 const RECORD_SIZE        = 2.65;  // governs crate inner dimensions
 const RECORD_THICK       = 0.088;
 const RECORD_BASE_Y      = RECORD_SIZE * 0.54;  // sleeve bottom at front wall top — full sleeve visible, no interior gap
+const RECORD_FRONT_Z     = 0;
+const RECORD_BACK_Z      = -RECORD_SIZE * 0.12;
 const DISC_PEEK          = RECORD_SIZE * 0.5;  // disc centre at sleeve top edge — half visible
 const CRATE_DIST         = 3.2;   // distance in front of player
 const CRATE_Y            = 1.1;   // crate group height off the floor
@@ -2526,7 +2586,7 @@ function _buildCrateRecord(rec) {
   grp.add(sleeve);
 
   const discGeo = new THREE.CircleGeometry(RECORD_SIZE * 0.46, 48);
-  const discMat = new THREE.MeshBasicMaterial({ map: VINYL.discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
+  const discMat = new THREE.MeshBasicMaterial({ map: rec.discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
   const disc = new THREE.Mesh(discGeo, discMat);
   disc.position.set(0, DISC_PEEK, -RECORD_THICK * 0.5 - 0.002);
   grp.add(disc);
@@ -2535,27 +2595,53 @@ function _buildCrateRecord(rec) {
   return grp;
 }
 
-// Next record in the crate — blank sleeve, disc starts inside (y=0, hidden), ready to animate up.
-function _buildCrateSeatedRecord() {
+// Next record in the crate — disc starts inside (y=0, hidden), ready to animate up.
+function _buildCrateSeatedRecord(rec) {
   const grp = new THREE.Group();
   const edgeMat  = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.8, metalness: 0.0 });
-  const coverMat = new THREE.MeshBasicMaterial({ map: VINYL.blankTex });
-  const backMat  = new THREE.MeshBasicMaterial({ map: VINYL.blankTex });
+  const coverTex = rec ? rec.coverTex : VINYL.blankTex;
+  const backTex  = rec ? rec.backTex  : VINYL.blankTex;
+  const coverMat = new THREE.MeshBasicMaterial({ map: coverTex });
+  const backMat  = new THREE.MeshBasicMaterial({ map: backTex });
   const sleeveGeo = new THREE.BoxGeometry(RECORD_SIZE, RECORD_SIZE, RECORD_THICK);
   const sleeve = new THREE.Mesh(sleeveGeo, [edgeMat, edgeMat, edgeMat, edgeMat, coverMat, backMat]);
   grp.add(sleeve);
   const discGeo = new THREE.CircleGeometry(RECORD_SIZE * 0.46, 48);
-  const discMat = new THREE.MeshBasicMaterial({ map: VINYL.discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
+  const discTex = (rec && rec.discTex) ? rec.discTex : VINYL.records[0].discTex;
+  const discMat = new THREE.MeshBasicMaterial({ map: discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
   const disc = new THREE.Mesh(discGeo, discMat);
   disc.position.set(0, 0, -RECORD_THICK * 0.5 - 0.002);
   grp.add(disc);
-  grp.userData = { sleeve, disc, sleeveGeo, discGeo, mats: [edgeMat, coverMat, backMat, discMat] };
+  grp.userData = { sleeve, disc, sleeveGeo, discGeo, mats: [edgeMat, coverMat, backMat, discMat], rec: rec || null };
   return grp;
 }
 
-function _startCrateSwap() {
+// Re-point an existing record group's sleeve/disc materials at another record's
+// shared textures. Used to cycle the seated (hidden) record through the crate so
+// any number of records can flow past with the same two-mesh swap animation.
+function _retextureCrateRecord(grp, rec) {
+  if (!grp || !rec) return;
+  const ud = grp.userData;
+  if (!ud || !ud.mats) return;
+  // mats = [edgeMat, coverMat, backMat, discMat]
+  ud.mats[1].map = rec.coverTex || VINYL.blankTex; ud.mats[1].needsUpdate = true;
+  ud.mats[2].map = rec.backTex  || VINYL.blankTex; ud.mats[2].needsUpdate = true;
+  ud.mats[3].map = rec.discTex  || VINYL.records[0].discTex; ud.mats[3].needsUpdate = true;
+  ud.rec = rec;
+}
+
+function _startCrateSwap(dir) {
   if (!crateGroup || crateSwapPhase || cratePhase !== 'browsing') return;
   if (!_crateSelGrp || !_crateSeatedGrp) return;
+  const N = VINYL.records.length;
+  _crateSwapDir = dir < 0 ? -1 : 1;
+  // The seated record (fully hidden behind the raised one) always rises to the
+  // front next, so re-point it at the record we're stepping toward — forward or
+  // back — before the swap animation lifts it into view.
+  if (N > 1) {
+    const target = (_crateIdx + _crateSwapDir + N) % N;
+    _retextureCrateRecord(_crateSeatedGrp, VINYL.records[target]);
+  }
   crateSwapPhase = 'swapping';
   crateSwapT = 0;
   if (_elCratePrev) _elCratePrev.classList.remove('visible');
@@ -2570,26 +2656,32 @@ function _tickCrateSwap(dt) {
   const sel = _crateSelGrp;
   const sat = _crateSeatedGrp;
 
-  // Each record keeps its place in line (its z depth) for the whole swap — they
-  // only ever move vertically. The records simply trade heights.
+  // Records trade height and depth — the incoming record slides to the front so its
+  // sleeve artwork is fully visible, while the outgoing record sinks and moves back.
   const LOW_Y = RECORD_SIZE * 0.14;
 
   function eio(x) { return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2; }
   function seg(v, s, e) { return eio(Math.max(0, Math.min(1, (v - s) / (e - s)))); }
 
   const ezDisc = seg(t, 0,    0.25);  // selected disc slides into its sleeve
-  const ezDrop = seg(t, 0.10, 0.65);  // selected record sinks down in place
-  const ezRise = seg(t, 0.30, 0.85);  // seated record lifts up in place (stays behind)
+  const ezDrop = seg(t, 0.10, 0.65);  // selected record sinks and slides back
+  const ezRise = seg(t, 0.30, 0.85);  // seated record lifts and slides forward
   const ezLift = seg(t, 0.55, 1.0);   // seated disc lifts above sleeve
 
   // Selected disc closes.
   if (sel && sel.userData.disc) sel.userData.disc.position.y = DISC_PEEK * (1 - ezDisc);
 
-  // Selected record sinks straight down — z never changes, it stays in its place in line.
-  if (sel) sel.position.y = RECORD_BASE_Y + (LOW_Y - RECORD_BASE_Y) * ezDrop;
+  // Selected record sinks and moves to the back of the stack.
+  if (sel) {
+    sel.position.y = RECORD_BASE_Y + (LOW_Y - RECORD_BASE_Y) * ezDrop;
+    sel.position.z = RECORD_FRONT_Z + (RECORD_BACK_Z - RECORD_FRONT_Z) * ezDrop;
+  }
 
-  // Seated record lifts straight up behind — z never changes, it stays in its place in line.
-  if (sat) sat.position.y = LOW_Y + (RECORD_BASE_Y - LOW_Y) * ezRise;
+  // Seated record lifts and moves to the front.
+  if (sat) {
+    sat.position.y = LOW_Y + (RECORD_BASE_Y - LOW_Y) * ezRise;
+    sat.position.z = RECORD_BACK_Z + (RECORD_FRONT_Z - RECORD_BACK_Z) * ezRise;
+  }
 
   // Seated disc lifts.
   if (sat && sat.userData.disc) sat.userData.disc.position.y = DISC_PEEK * ezLift;
@@ -2597,13 +2689,23 @@ function _tickCrateSwap(dt) {
   if (crateSwapT >= 1) {
     crateSwapPhase = null;
     crateSwapT = 0;
-    // Snap to exact resting heights (z is left untouched — each record keeps its place in line).
-    if (sel) sel.position.y = RECORD_SIZE * 0.14;
-    if (sat) sat.position.y = RECORD_BASE_Y;
+    if (sel) {
+      sel.position.y = RECORD_SIZE * 0.14;
+      sel.position.z = RECORD_BACK_Z;
+    }
+    if (sat) {
+      sat.position.y = RECORD_BASE_Y;
+      sat.position.z = RECORD_FRONT_Z;
+    }
     if (sel && sel.userData.disc) sel.userData.disc.position.y = 0;
     if (sat && sat.userData.disc) sat.userData.disc.position.y = DISC_PEEK;
     _crateSelGrp    = sat;
     _crateSeatedGrp = sel;
+    // Advance the index in the direction we stepped. The record that just sank
+    // to the back stays hidden until the next button press re-textures it for
+    // whichever direction is chosen then.
+    const N = VINYL.records.length;
+    _crateIdx = (_crateIdx + _crateSwapDir + N) % N;
     if (_elCratePrev) _elCratePrev.classList.add('visible');
     if (_elCrateNext) _elCrateNext.classList.add('visible');
   }
@@ -2633,17 +2735,29 @@ function _openCrate(px, pz, openYaw) {
 
   _crateSelGrp    = null;
   _crateSeatedGrp = null;
-  VINYL.records.forEach(rec => {
-    const seated = _buildCrateSeatedRecord();
-    seated.position.set(0, RECORD_SIZE * 0.14, -RECORD_SIZE * 0.12);
+  _crateIdx       = 0;
+  const recs = VINYL.records;
+  if (recs.length >= 2) {
+    const seated = _buildCrateSeatedRecord(recs[1]);
+    seated.position.set(0, RECORD_SIZE * 0.14, RECORD_BACK_Z);
     crateGroup.add(seated);
-    if (!_crateSeatedGrp) _crateSeatedGrp = seated;
+    _crateSeatedGrp = seated;
 
-    const grp = _buildCrateRecord(rec);
-    grp.position.set(0, RECORD_BASE_Y, 0);
+    const grp = _buildCrateRecord(recs[0]);
+    grp.position.set(0, RECORD_BASE_Y, RECORD_FRONT_Z);
     crateGroup.add(grp);
-    if (!_crateSelGrp) _crateSelGrp = grp;
-  });
+    _crateSelGrp = grp;
+  } else if (recs.length === 1) {
+    const seated = _buildCrateSeatedRecord();
+    seated.position.set(0, RECORD_SIZE * 0.14, RECORD_BACK_Z);
+    crateGroup.add(seated);
+    _crateSeatedGrp = seated;
+
+    const grp = _buildCrateRecord(recs[0]);
+    grp.position.set(0, RECORD_BASE_Y, RECORD_FRONT_Z);
+    crateGroup.add(grp);
+    _crateSelGrp = grp;
+  }
 
   crateGroup.scale.setScalar(0.04);
 }
@@ -2691,8 +2805,9 @@ function _startCrateFocus(disc) {
   _syncCamera();
   _discWorldTransform(disc);
 
+  const focusRec = (_crateSelGrp && _crateSelGrp.userData) ? _crateSelGrp.userData.rec || null : null;
   const geo = new THREE.CircleGeometry(CRATE_DISC_R, 64);
-  const mat = new THREE.MeshBasicMaterial({ map: VINYL.discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
+  const mat = new THREE.MeshBasicMaterial({ map: focusRec.discTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
   crateFocusMesh = new THREE.Mesh(geo, mat);
   crateFocusMesh.renderOrder = 250;
   crateFocusMesh.position.copy(_crateDiscPos);
@@ -2800,6 +2915,7 @@ function _closeCrate() {
   crateSwapT      = 0;
   _crateSelGrp    = null;
   _crateSeatedGrp = null;
+  _crateIdx       = 0;
   _hideFocusEscapeHint();
   if (_elCratePrev) _elCratePrev.classList.remove('visible');
   if (_elCrateNext) _elCrateNext.classList.remove('visible');
@@ -2847,10 +2963,16 @@ const _elCratePrev   = document.getElementById('crate-prev-btn');
 const _elCrateNext   = document.getElementById('crate-next-btn');
 const _elCrateSc       = document.getElementById('crate-sc-embed');
 const _elCrateScIframe = document.getElementById('crate-sc-iframe');
+const _elCrateScCredit = document.getElementById('crate-sc-credit');
 
 function _showCrateScEmbed(rec) {
   if (!_elCrateSc || !rec || !rec.soundcloud) return;
   if (_elCrateScIframe && _elCrateScIframe.src !== rec.soundcloud) _elCrateScIframe.src = rec.soundcloud;
+  if (_elCrateScCredit && rec.creditUser && rec.creditTrack) {
+    _elCrateScCredit.innerHTML =
+      `<a href="${rec.creditUser}" title="${rec.creditUserLabel}" target="_blank">${rec.creditUserLabel}</a>` +
+      ` &middot; <a href="${rec.creditTrack}" title="${rec.creditTrackLabel}" target="_blank">${rec.creditTrackLabel}</a>`;
+  }
   _elCrateSc.classList.add('visible');
 }
 
@@ -2880,12 +3002,12 @@ function _hideFocusEscapeHint() {
 }
 
 if (_elCratePrev) {
-  const _cratePrevFire = e => { e.preventDefault(); e.stopPropagation(); _startCrateSwap(); };
+  const _cratePrevFire = e => { e.preventDefault(); e.stopPropagation(); _startCrateSwap(-1); };
   _elCratePrev.addEventListener('click', _cratePrevFire);
   _elCratePrev.addEventListener('touchstart', _cratePrevFire, { passive: false });
 }
 if (_elCrateNext) {
-  const _crateNextFire = e => { e.preventDefault(); e.stopPropagation(); _startCrateSwap(); };
+  const _crateNextFire = e => { e.preventDefault(); e.stopPropagation(); _startCrateSwap(1); };
   _elCrateNext.addEventListener('click', _crateNextFire);
   _elCrateNext.addEventListener('touchstart', _crateNextFire, { passive: false });
 }
