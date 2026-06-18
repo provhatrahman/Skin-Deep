@@ -12,8 +12,8 @@ desktop.ini
 __pycache__/
 *.py[cod]
 
-# Cloudflare Pages deploy dir (regenerated from root files)
-public/
+# Wrangler local state
+.wrangler/
 
 # Dev artefacts (these live on the dev branch, not main)
 _img_dataurl.txt

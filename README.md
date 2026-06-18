@@ -25,12 +25,12 @@ The experience is intended to be **embedded as an `<iframe>`** on the Skin Deep 
 ## Repository structure
 
 ```
-digital_exhibition_faith.html   — The entire application (self-contained)
+index.html         — The entire application (self-contained)
 orb_tex.png        — Player orb texture
 tile.png           — Floor and wall tile texture
 ```
 
-All game logic, UI, and shaders live inside `digital_exhibition_faith.html`. There is no build process, bundler, or package manager.
+All game logic, UI, and shaders live inside `index.html`. There is no build process, bundler, or package manager.
 
 ---
 
@@ -40,7 +40,7 @@ All game logic, UI, and shaders live inside `digital_exhibition_faith.html`. The
    ```
    python -m http.server 8080
    ```
-2. Open `http://localhost:8080/digital_exhibition_faith.html` in a browser.
+2. Open `http://localhost:8080/` in a browser.
 3. Press `Ctrl+C` to stop.
 
 > The page must be served over HTTP (not opened as a `file://` URL) because textures are loaded as separate files.
