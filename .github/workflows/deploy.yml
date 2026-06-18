@@ -13,10 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Deploys the repo root; .assetsignore limits the upload to the site files.
+      # public/ holds the entire site (index.html + textures); deploy it as-is.
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy . --project-name faith-digital-gallery --branch main
+          command: pages deploy public --project-name faith-digital-gallery --branch main
