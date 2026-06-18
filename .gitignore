@@ -12,6 +12,9 @@ desktop.ini
 __pycache__/
 *.py[cod]
 
+# Cloudflare Pages deploy dir (regenerated from root files)
+public/
+
 # Dev artefacts (these live on the dev branch, not main)
 _img_dataurl.txt
 _img2_dataurl.txt
