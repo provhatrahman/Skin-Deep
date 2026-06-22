@@ -88,6 +88,7 @@
     #toast { font-size: 12px; padding: 12px 20px; max-width: 240px;
              backdrop-filter: none; -webkit-backdrop-filter: none; }
     #tut-card { backdrop-filter: none; -webkit-backdrop-filter: none; }
+    #exh-pan-card { backdrop-filter: none; -webkit-backdrop-filter: none; }
   }
 
   /* ── PROXIMITY INTERACT PROMPT ── */
@@ -334,6 +335,29 @@
     will-change: transform;
   }
   #tut-guide-dot.visible { display: block; }
+  #exh-pan-wrap.visible { display: block; }
+  #exh-pan-wrap {
+    position: fixed;
+    pointer-events: none; z-index: 31; display: none;
+    width: 20px; height: 20px;
+    transform: translate(-50%, -50%);
+    will-change: transform, left, top;
+  }
+  #exh-pan-card {
+    position: absolute; bottom: calc(100% + 10px); left: 50%;
+    transform: translateX(-50%);
+    background: rgba(5,3,1,0.78); border: 1px solid rgba(255,200,100,0.3);
+    border-radius: 10px; padding: 9px 14px; text-align: center;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.85), 0 0 40px rgba(255,180,60,0.05), inset 0 1px 0 rgba(255,200,100,0.1);
+    color: rgba(255,225,160,0.92);
+    font-family: Georgia, serif; font-size: 11px; letter-spacing: 0.06em; line-height: 1.5;
+    white-space: nowrap;
+  }
+  #exh-pan-guide {
+    position: absolute; top: 0; left: 0;
+    width: 20px; height: 20px;
+  }
   /* Directing ring — converges onto the dot before it sweeps */
   .tut-gdot-ring {
     position: absolute; top: 0; left: 0;
@@ -514,6 +538,10 @@
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M9 18l6-6-6-6"/></svg>
 </button>
 <div id="tut-guide-dot"><div class="tut-gdot-ring"></div><div class="tut-gdot-ball"></div></div>
+<div id="exh-pan-wrap">
+  <div id="exh-pan-guide"><div class="tut-gdot-ring"></div><div class="tut-gdot-ball"></div></div>
+  <div id="exh-pan-card">Swipe the orb to look around</div>
+</div>
 <div id="tut-overlay">
   <div id="tut-card">
     <div id="tut-step">Step 1 of 5</div>
@@ -1678,6 +1706,19 @@ _fShadowCtx.fillStyle = _fShadowGrad;
 _fShadowCtx.fillRect(0,0,64,64);
 const _floaterShadowTex = new THREE.CanvasTexture(_fShadowCanvas);
 
+// Mobile floor light pool — soft radial disc under each beam (always visible at any distance).
+const _fSpotCanvas = document.createElement('canvas');
+_fSpotCanvas.width = _fSpotCanvas.height = 128;
+const _fSpotCtx = _fSpotCanvas.getContext('2d');
+const _fSpotGrad = _fSpotCtx.createRadialGradient(64, 64, 0, 64, 64, 64);
+_fSpotGrad.addColorStop(0,   'rgba(255,255,255,0.42)');
+_fSpotGrad.addColorStop(0.45,'rgba(255,255,255,0.16)');
+_fSpotGrad.addColorStop(0.8, 'rgba(255,255,255,0.04)');
+_fSpotGrad.addColorStop(1,   'rgba(255,255,255,0)');
+_fSpotCtx.fillStyle = _fSpotGrad;
+_fSpotCtx.fillRect(0, 0, 128, 128);
+const _floaterSpotTex = new THREE.CanvasTexture(_fSpotCanvas);
+
 const floaterData = [
   { pos:[   0,1.1,    4], geo:new THREE.OctahedronGeometry(0.32),         color:0xffcc44, em:0xff8800, tex:'rune',   msg:"[ROOM OPENED]" },
   { pos:[ -11,1.2,  -11], geo:new THREE.OctahedronGeometry(0.25),         color:0x88ddff, em:0x2299cc, tex:'crystal', msg:"[EXHIBIT PIECE TRIGGERED]" },
@@ -1801,19 +1842,23 @@ beamCone.position.set(0, 4.5, 4);  // midpoint between source (y=9) and floor (y
 scene.add(beamCone);
 
 // ── BEAMS OF LIGHT on remaining floaters (fade in after room reveals) ──
-// Desktop only — 8 extra spotlights are the heaviest per-pixel cost. On mobile the
-// single floater-0 beam plus emissive glow carries the look.
+// Desktop: one SpotLight per floater. Mobile: volumetric cone + soft floor disc per floater.
+const BEAM_CONE_OPACITY = 0.045;
+const BEAM_FLOOR_SPOT_OPACITY = isMobile ? 0.28 : 0;
 floaters.forEach((f, i) => {
-  if (i === 0 || isMobile) return; // first floater's beam already created above
+  if (i === 0) return; // first floater's beam already created above
   const px = floaterData[i].pos[0], pz = floaterData[i].pos[2];
   const col = floaterData[i].color;
-  const bl = new THREE.SpotLight(col, 0, 18, Math.PI / 11, 0.25, 1.5);
-  bl.position.set(px, 13, pz);
-  bl.target.position.set(px, 0.5, pz);
-  scene.add(bl); scene.add(bl.target);
+  if (!isMobile) {
+    const bl = new THREE.SpotLight(col, 0, 18, Math.PI / 11, 0.25, 1.5);
+    bl.position.set(px, 13, pz);
+    bl.target.position.set(px, 0.5, pz);
+    scene.add(bl); scene.add(bl.target);
+    f.beam = bl;
+  }
   const cone = new THREE.Mesh(
     // bottom = distance(13) * tan(PI/11) ≈ 3.82
-    new THREE.CylinderGeometry(0.05, 3.82, 13, 24, 1, true),
+    new THREE.CylinderGeometry(0.05, 3.82, 13, isMobile ? 12 : 24, 1, true),
     new THREE.MeshBasicMaterial({
       color: col, transparent: true, opacity: 0,
       side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
@@ -1821,8 +1866,21 @@ floaters.forEach((f, i) => {
   );
   cone.position.set(px, 6.5, pz);
   scene.add(cone);
-  f.beam = bl;
   f.beamCone = cone;
+  if (isMobile) {
+    const floorSpot = new THREE.Mesh(
+      new THREE.CircleGeometry(3.55, 24),
+      new THREE.MeshBasicMaterial({
+        map: _floaterSpotTex, color: col, transparent: true, opacity: 0,
+        depthWrite: false, depthTest: true, blending: THREE.NormalBlending
+      })
+    );
+    floorSpot.rotation.x = -Math.PI / 2;
+    floorSpot.position.set(px, 0.003, pz);
+    floorSpot.renderOrder = 1;
+    scene.add(floorSpot);
+    f.floorSpot = floorSpot;
+  }
 });
 
 let roomRevealed = false;
@@ -2387,6 +2445,39 @@ function _showExhibitFocusNav() {
   _elExhibitNext?.classList.add('visible');
 }
 
+const _exhPanWrap  = document.getElementById('exh-pan-wrap');
+const _exhPanGuide = document.getElementById('exh-pan-guide');
+let _exhPanGuideOn = false;
+let _exhPanGuideYaw0 = 0;
+let _exhPanGuideTimer = null;
+let _exhPanGuideAltTimer = null;
+
+function _hideExhibitPanGuide() {
+  clearTimeout(_exhPanGuideTimer);
+  clearInterval(_exhPanGuideAltTimer);
+  _exhPanGuideTimer = null;
+  _exhPanGuideAltTimer = null;
+  _exhPanWrap.classList.remove('visible');
+  _exhPanGuideOn = false;
+}
+
+function _showExhibitPanGuide() {
+  if (!isMobile || exhibitPanelN < 2 || exhibitFocusPhase) return;
+  clearTimeout(_exhPanGuideTimer);
+  clearInterval(_exhPanGuideAltTimer);
+  const ball = _exhPanGuide.querySelector('.tut-gdot-ball');
+  ball.classList.remove('swipe-left');
+  void _exhPanWrap.offsetWidth;
+  _exhPanWrap.classList.add('visible');
+  _exhPanGuideOn = true;
+  _exhPanGuideYaw0 = yaw;
+  _exhPanGuideAltTimer = setInterval(() => {
+    ball.classList.toggle('swipe-left');
+    void _exhPanWrap.offsetWidth;
+  }, 3500);
+  _exhPanGuideTimer = setTimeout(_hideExhibitPanGuide, 12000);
+}
+
 function _showExhibitHint() {
   _elFocusEscapeHint.innerHTML = isMobile
     ? `<span class="feh-label">tap to focus</span>`
@@ -2398,8 +2489,10 @@ function _showExhibitHint() {
   if (exhibitPanelN >= 2) {
     _elExhibitPrev?.classList.add('visible');
     _elExhibitNext?.classList.add('visible');
+    _showExhibitPanGuide();
   } else {
     _hideExhibitNav();
+    _hideExhibitPanGuide();
   }
 }
 
@@ -2452,6 +2545,7 @@ function _startExhibitFocus(idx) {
   exhibitFocusT = 0;
   _hideFocusEscapeHint();
   _hideExhibitNav();
+  _hideExhibitPanGuide();
   _captureExhibitFocusFrom(p.mesh);
 }
 
@@ -2491,6 +2585,7 @@ function _setFloaterVisible(f, visible) {
   if (f.light) f.light.visible = visible;
   if (f.beam) f.beam.visible = visible;
   if (f.beamCone) f.beamCone.visible = visible;
+  if (f.floorSpot) f.floorSpot.visible = visible;
 }
 
 function _restoreExhibitFloater() {
@@ -2509,6 +2604,7 @@ function _dismissExhibit() {
   exhibitPhase = 'closing';
   _hideExhibitNav();
   _hideFocusEscapeHint();
+  _hideExhibitPanGuide();
   _restoreExhibitFloater();
 }
 
@@ -2585,6 +2681,7 @@ function _closeExhibit() {
   _resetExhibitFocus();
   _hideExhibitNav();
   _hideFocusEscapeHint();
+  _hideExhibitPanGuide();
   if (exhibitPlanes) {
     exhibitPlanes.forEach(p => {
       scene.remove(p.mesh);
@@ -3235,6 +3332,7 @@ if (_elCrateNext) {
 const _exhibitNavFire = (dir, e) => {
   e.preventDefault();
   e.stopPropagation();
+  _hideExhibitPanGuide();
   if (exhibitFocusPhase === 'focused') _exhibitFocusStep(dir);
   else if (exhibitPhase === 'open' && !exhibitFocusPhase) _exhibitStep(dir);
 };
@@ -3329,9 +3427,10 @@ function animate() {
 
   // Remaining floater beams fade IN with the reveal
   floaters.forEach((f, i) => {
-    if (i === 0 || !f.beam) return;
-    f.beam.intensity = _roomLight * 6.0;
-    f.beamCone.material.opacity = _roomLight * 0.045;
+    if (i === 0 || !f.beamCone) return;
+    if (f.beam) f.beam.intensity = _roomLight * 6.0;
+    f.beamCone.material.opacity = _roomLight * BEAM_CONE_OPACITY;
+    if (f.floorSpot) f.floorSpot.material.opacity = _roomLight * BEAM_FLOOR_SPOT_OPACITY;
   });
 
   const _orbDim = 1 - focusDimT * 0.82;
@@ -3386,6 +3485,10 @@ function animate() {
     f.fShadow.position.x = f.mesh.position.x;
     f.fShadow.position.z = f.mesh.position.z;
     f.fShadow.material.opacity = 0.4 - floatY * 0.8;
+    if (f.floorSpot) {
+      f.floorSpot.position.x = f.mesh.position.x;
+      f.floorSpot.position.z = f.mesh.position.z;
+    }
 
     const dx=player.position.x-f.mesh.position.x, dz=player.position.z-f.mesh.position.z;
     const dist2=dx*dx+dz*dz;
@@ -3815,15 +3918,24 @@ function animate() {
   _mmFrame++;
   if (!isMobile || _mmFrame % 3 === 0) drawMinimap();
 
-  // Position guide dot at the orb's screen projection
-  if (tutStage <= 1 && _tutGuideDot.classList.contains('visible')) {
+  // Position guide dots at the orb's screen projection
+  if ((tutStage <= 1 && _tutGuideDot.classList.contains('visible')) || _exhPanGuideOn) {
     const _orbWorld = new THREE.Vector3();
     orbMesh.getWorldPosition(_orbWorld);
     _orbWorld.project(camera);
     const sx = ( _orbWorld.x * 0.5 + 0.5) * window.innerWidth;
     const sy = (-_orbWorld.y * 0.5 + 0.5) * window.innerHeight;
-    _tutGuideDot.style.left = (sx - 10) + 'px';
-    _tutGuideDot.style.top  = (sy - 10) + 'px';
+    if (tutStage <= 1 && _tutGuideDot.classList.contains('visible')) {
+      _tutGuideDot.style.left = (sx - 10) + 'px';
+      _tutGuideDot.style.top  = (sy - 10) + 'px';
+    }
+    if (_exhPanGuideOn) {
+      if (Math.abs(yaw - _exhPanGuideYaw0) > 0.12) _hideExhibitPanGuide();
+      else {
+        _exhPanWrap.style.left = sx + 'px';
+        _exhPanWrap.style.top  = sy + 'px';
+      }
+    }
   }
 }
 
