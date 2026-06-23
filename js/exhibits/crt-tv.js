@@ -69,6 +69,7 @@ let logoVX = 0, logoVY = 0;        // velocity (units/sec)
 let logoHalfX = 0, logoHalfY = 0;  // travel bounds (set at build from screen size)
 let logoHue = 0.58;                // cycles on each wall hit
 let _logoBaseX = 0, _logoBaseY = 0;
+const LOGO_SPEED = 0.6;            // base drift speed (units/sec); each axis gets 0.5–1.0× of it
 
 // ── small canvas helpers (shared with the MPC faceplate idiom) ──
 function _rr(x, cx, cy, w, h, r) {
@@ -590,9 +591,11 @@ function _buildCrtTv() {
   logoHalfY = Math.max(0, scrH / 2 - logoH / 2);
   logoX = (Math.random() * 2 - 1) * logoHalfX * 0.5;
   logoY = (Math.random() * 2 - 1) * logoHalfY * 0.5;
-  const _logoSpeed = 0.6;   // units/sec
-  logoVX = (Math.random() < 0.5 ? -1 : 1) * _logoSpeed * 0.72;
-  logoVY = (Math.random() < 0.5 ? -1 : 1) * _logoSpeed * 0.72;
+  // Different speed on each axis (NOT equal — equal vx/vy only ever travels at 45°, so it
+  // retraces the same diagonal diamond forever). Unequal components make the path wander and
+  // fill the screen before it repeats.
+  logoVX = (Math.random() < 0.5 ? -1 : 1) * LOGO_SPEED * (0.5 + Math.random() * 0.5);
+  logoVY = (Math.random() < 0.5 ? -1 : 1) * LOGO_SPEED * (0.5 + Math.random() * 0.5);
 
   // SKIN DEEP plate — seated on the bottom rail of the chrome screen bezel, centred under
   // the screen, exactly where the reference's "SONY" plate sits.
@@ -912,7 +915,14 @@ registerExhibit({
       else if (logoX < -logoHalfX) { logoX = -logoHalfX; logoVX = Math.abs(logoVX); hit = true; }
       if (logoY >  logoHalfY) { logoY =  logoHalfY; logoVY = -Math.abs(logoVY); hit = true; }
       else if (logoY < -logoHalfY) { logoY = -logoHalfY; logoVY = Math.abs(logoVY); hit = true; }
-      if (hit) { logoHue = (logoHue + 0.137) % 1; CRT.logoMesh.material.color.setHSL(logoHue, 0.85, 0.6); }
+      if (hit) {
+        // Re-pick each axis speed (keeping the just-reflected sign) so the trajectory keeps
+        // changing angle and never settles into a repeating loop.
+        logoVX = Math.sign(logoVX) * LOGO_SPEED * (0.5 + Math.random() * 0.5);
+        logoVY = Math.sign(logoVY) * LOGO_SPEED * (0.5 + Math.random() * 0.5);
+        logoHue = (logoHue + 0.137) % 1;
+        CRT.logoMesh.material.color.setHSL(logoHue, 0.85, 0.6);
+      }
       CRT.logoMesh.position.x = _logoBaseX + logoX;
       CRT.logoMesh.position.y = _logoBaseY + logoY;
     }
