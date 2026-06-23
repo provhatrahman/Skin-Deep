@@ -1129,7 +1129,7 @@ function showWelcomeCard() {
        ${_divider}
        <p>Inside, <b>swipe</b> to move between pieces and play any media.</p>
        <p><b>Tap away</b> or drift off to step back into the room.</p>`
-    : `<p>You're inside the Skin Deep digital exhibition: a quiet, explorable gallery.</p>
+    : `<p>You're inside the Yaqeen digital exhibition: a quiet, explorable gallery.</p>
        <p>Drift up to any glowing object or spotlight and press <b>Space</b> to open its exhibit.</p>
        ${_divider}
        <p>Inside, <b>read the on screen instructions</b> for how to view pieces and play any media.</p>
