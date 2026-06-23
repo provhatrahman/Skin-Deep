@@ -140,6 +140,9 @@ const VINYL = {
   crateWoodH: null,
   _box: null,
   _built: false,
+  _labelCanvas: null,   // dynamic front nameplate (brand + current record detail)
+  _labelCtx: null,
+  _labelTex: null,
 };
 
 // Seeded PRNG so crate wood looks identical every load.
@@ -426,6 +429,129 @@ function makeVinylBlankSleeveTex() {
   return new THREE.CanvasTexture(cv);
 }
 
+// Dynamic engraved gold nameplate on the front of the crate. The brushed-brass
+// backing is kept deliberately deep/saturated so it never blows to cream under the
+// player's light, and every line is engraved (bright chiseled edge + near-black
+// face) so the dark lettering stays legible against the glowing metal. Repainted
+// per record via _drawGoldLabel — the "NTS SHOWS" brand sits above the title, host,
+// date and genres of whatever record is currently raised.
+const LABEL_W = 560, LABEL_H = 202;
+
+// Engraved line: a faint bright chisel edge, a thin dark outline for crispness, then
+// a near-OPAQUE dark face. The face must stay opaque — a translucent fill lets the
+// bright gold show through and the line reads as light embossing, not dark engraving.
+function _engLine(ctx, txt, x, y) {
+  if (!txt) return;
+  ctx.fillStyle = 'rgba(255,240,195,0.28)';
+  ctx.fillText(txt, x, y + 1);
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = 'rgba(8,4,0,0.85)';
+  ctx.strokeText(txt, x, y);
+  ctx.fillStyle = 'rgba(10,5,0,0.97)';
+  ctx.fillText(txt, x, y);
+}
+
+// Heavier engraved line (title) — adds a dark stroke so the strokes stay bold.
+function _engHeavy(ctx, txt, x, y) {
+  if (!txt) return;
+  ctx.fillStyle = 'rgba(255,240,195,0.6)';
+  ctx.fillText(txt, x, y + 2);
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = 'rgba(8,4,0,0.95)';
+  ctx.strokeText(txt, x, y);
+  ctx.fillStyle = 'rgba(10,5,0,0.98)';
+  ctx.fillText(txt, x, y);
+}
+
+// Pick the largest font (up to maxPx) at which `txt` fits within targetW, so short
+// strings render big and fill the plate while long ones shrink to stay on one line.
+function _fitFont(ctx, txt, prefix, maxPx, targetW, minPx) {
+  ctx.font = `${prefix}${maxPx}px Georgia, serif`;
+  const w = ctx.measureText(txt).width;
+  const px = (w > targetW) ? Math.max(minPx || 10, Math.floor(maxPx * targetW / w)) : maxPx;
+  return `${prefix}${px}px Georgia, serif`;
+}
+
+function _engDivider(ctx, cx, y, halfW) {
+  ctx.strokeStyle = 'rgba(40,24,4,0.5)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx - halfW, y); ctx.lineTo(cx + halfW, y); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,240,195,0.35)';
+  ctx.beginPath(); ctx.moveTo(cx - halfW, y + 1); ctx.lineTo(cx + halfW, y + 1); ctx.stroke();
+}
+
+// Repaint the crate's nameplate for `rec`. Cheap + user-triggered (open / browse),
+// so we redraw the shared canvas and flag the texture for re-upload.
+function _drawGoldLabel(rec) {
+  const ctx = VINYL._labelCtx;
+  if (!ctx) return;
+  const W = LABEL_W, H = LABEL_H, cx = W / 2;
+  const d = (rec && rec.disc) || {};
+
+  // Brushed gold base — deep saturated vertical gradient.
+  const base = ctx.createLinearGradient(0, 0, 0, H);
+  base.addColorStop(0,    '#b07e2a');
+  base.addColorStop(0.45, '#8f6418');
+  base.addColorStop(0.6,  '#7d5612');
+  base.addColorStop(1,    '#5c3f0c');
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, W, H);
+
+  // Fine horizontal brushed streaks.
+  for (let i = 0; i < 150; i++) {
+    const y = Math.floor((i / 150) * H);
+    ctx.strokeStyle = (i % 2 === 0) ? 'rgba(255,248,210,0.09)' : 'rgba(90,60,12,0.10)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); ctx.stroke();
+  }
+
+  // Beveled border — dark outer recess, bright inner highlight.
+  const inset = 10;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(70,46,8,0.65)';
+  ctx.strokeRect(inset, inset, W - inset * 2, H - inset * 2);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(255,246,205,0.5)';
+  ctx.strokeRect(inset + 3, inset + 3, W - inset * 2 - 6, H - inset * 2 - 6);
+
+  // Faint diagonal sheen — drawn BEFORE the text so it can't lift the dark letters.
+  const sheen = ctx.createLinearGradient(0, 0, W, H);
+  sheen.addColorStop(0,   'rgba(255,235,180,0.09)');
+  sheen.addColorStop(0.5, 'rgba(255,255,255,0)');
+  sheen.addColorStop(1,   'rgba(255,235,180,0.05)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+
+  // Brand eyebrow — spaced caps, fit to width.
+  ctx.font = _fitFont(ctx, 'N T S   S H O W S', '700 ', 20, W * 0.5, 14);
+  _engLine(ctx, 'N T S   S H O W S', cx, 32);
+  _engDivider(ctx, cx, 46, 140);
+
+  // Title — auto-fit to fill the plate width; the focal line, big as it fits.
+  const title = d.title || '';
+  ctx.font = _fitFont(ctx, title, 'italic 700 ', 58, W * 0.84, 30);
+  _engHeavy(ctx, title, cx, 100);
+
+  // Host subtitle, fit to width.
+  const host = [d.host1, d.host2].filter(Boolean).join(' ');
+  if (host) {
+    ctx.font = _fitFont(ctx, host, '400 ', 30, W * 0.82, 15);
+    _engLine(ctx, host, cx, 136);
+  }
+
+  _engDivider(ctx, cx, host ? 156 : 142, 150);
+
+  // Date · genres combined on one line, fit to width.
+  const meta = [d.date, d.genres].filter(Boolean).join('   ·   ');
+  ctx.font = _fitFont(ctx, meta, '400 ', 21, W * 0.92, 12);
+  _engLine(ctx, meta, cx, host ? 178 : 166);
+
+  if (VINYL._labelTex) VINYL._labelTex.needsUpdate = true;
+}
+
 // Black vinyl disc — concentric grooves + centre label.
 function makeVinylDiscTex(info) {
   const title   = info.title   || 'In Faith';
@@ -691,8 +817,44 @@ function _buildCrateBox() {
     g.add(post);
   });
 
+  // Dynamic gold nameplate on the front wall — repainted per record by _drawGoldLabel.
+  const labelCv = document.createElement('canvas');
+  labelCv.width = LABEL_W; labelCv.height = LABEL_H;
+  VINYL._labelCanvas = labelCv;
+  VINYL._labelCtx = labelCv.getContext('2d');
+  const goldTex = new THREE.CanvasTexture(labelCv);
+  goldTex.anisotropy = MAX_ANISO;
+  VINYL._labelTex = goldTex;
+  _drawGoldLabel(VINYL.records[0]);   // initial paint (first record)
+  // Plate sized to nearly fill the front wall; aspect matches the LABEL_W×LABEL_H canvas.
+  const plateH = front * 0.95;
+  const plateW = plateH * (LABEL_W / LABEL_H);
+  const plateThick = 0.03;
+  // The plaque is EMISSIVE-DOMINANT so it reads the same no matter how close the
+  // player's orb lights get: the gold canvas is shown via the emissive map (self-lit),
+  // while the lit diffuse is multiplied near-black (color 0x140d04) and the surface is
+  // non-metallic + rough so the orb's point lights can't blow it out to cream. The
+  // near-black engraved letters emit almost nothing, so they stay dark on glowing gold.
+  const goldMat = new THREE.MeshStandardMaterial({
+    map: goldTex, color: 0x140d04,
+    emissive: 0xffffff, emissiveMap: goldTex, emissiveIntensity: 0.85,
+    metalness: 0.0, roughness: 0.65,
+  });
+  const edgeGoldMat = new THREE.MeshStandardMaterial({
+    color: 0x2a1d08, emissive: 0x6e5212, emissiveIntensity: 0.35,
+    metalness: 0.0, roughness: 0.6,
+  });
+  const plateGeo = new THREE.BoxGeometry(plateW, plateH, plateThick);
+  // BoxGeometry face order: +x,-x,+y,-y,+z,-z — gold face is +z (toward viewer).
+  const plate = new THREE.Mesh(plateGeo, [
+    edgeGoldMat, edgeGoldMat, edgeGoldMat, edgeGoldMat, goldMat, edgeGoldMat,
+  ]);
+  plate.position.set(0, floorY + front / 2, depth / 2 + T + plateThick / 2);
+  g.add(plate);
+
   g.userData.parts = [bottom, back, frontW, left, right, backRail, leftRail, rightRail, frontRail];
-  g.userData.boxMats = [bottomMat, backMat, frontMat, sideMat, railMat, cornerMat];
+  g.userData.boxMats = [bottomMat, backMat, frontMat, sideMat, railMat, cornerMat, goldMat, edgeGoldMat];
+  g.userData.plateGeo = plateGeo;
   return g;
 }
 
@@ -762,6 +924,8 @@ function _startCrateSwap(dir) {
   if (N > 1) {
     const target = (_crateIdx + _crateSwapDir + N) % N;
     _retextureCrateRecord(_crateSeatedGrp, VINYL.records[target]);
+    // Repaint the front nameplate to the record rising into view.
+    _drawGoldLabel(VINYL.records[target]);
   }
   crateSwapPhase = 'swapping';
   crateSwapT = 0;
@@ -855,6 +1019,8 @@ function _openCrate(px, pz, openYaw) {
   const box = VINYL._box;
   crateGroup.add(box);
   crateGroup.userData.box = box;
+  // Reset the nameplate to the first record (the box is cached across opens).
+  _drawGoldLabel(VINYL.records[0]);
 
   _crateSelGrp    = null;
   _crateSeatedGrp = null;

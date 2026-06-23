@@ -623,6 +623,28 @@
     text-shadow: 0 0 10px rgba(255,190,80,0.6);
   }
 
+  /* ── SKIN DEEP RETURN LINK ── always-visible top-left redirect to the magazine */
+  #sd-return {
+    position: fixed; top: 14px; left: 14px; z-index: 40;
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 11px; border-radius: 20px;
+    font-family: Georgia, serif; font-size: 10px; letter-spacing: 0.14em;
+    text-transform: uppercase; text-decoration: none;
+    color: rgba(255,215,140,0.7);
+    background: rgba(4,2,0,0.55);
+    border: 1px solid rgba(255,200,100,0.22);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,200,100,0.06);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  }
+  #sd-return:hover {
+    color: rgba(255,228,160,0.95);
+    border-color: rgba(255,200,100,0.5);
+    background: rgba(8,5,1,0.7);
+  }
+  #sd-return svg { display: block; opacity: 0.8; }
+  @media (pointer: coarse) { #sd-return { backdrop-filter: none; -webkit-backdrop-filter: none; } }
+
   /* ── SPLASH / LOADING ── painted on first parse (no JS); core.js adds .hidden after ~1s.
      Deliberately minimal and compositor-friendly: a STATIC orb glow (no animation that could
      stutter while the GPU warms up) and a loading bar that fills via transform: scaleX (runs on
@@ -675,6 +697,10 @@
 <!-- Splash: veils the cold-start (shader compile + first frames + camera settle) for ~1s, then
      core.js fades it out. Purely CSS-driven: a static orb glow + a loading bar that fills via a
      compositor-only transform, so it stays smooth even while the GPU is warming up behind it. -->
+<a id="sd-return" href="https://skindeepmag.com/seasons/faith" target="_top" rel="noopener" aria-label="Return to Skin Deep">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M15 18l-6-6 6-6"/></svg>
+  Skin Deep
+</a>
 <div id="splash">
   <div class="splash-orb"></div>
   <div class="splash-title">YAQEEN</div>

@@ -1442,6 +1442,11 @@ function _onWelcomeTap() { _dismissWelcome(); }
 function _dismissWelcome() {
   if (!_welcomeOpen) return;
   _welcomeOpen = false;
+  // Re-arm the DPR governor's settle window (it was paused while the card was open) so it judges
+  // fresh post-dismiss frames rather than the residual reveal burst. _emaReset is left alone — it's
+  // a one-shot already spent on the cold-start settle.
+  _warmupUntil = performance.now() + 700;
+  _emaFrameMs  = 1000 / 60;
   _welcomeOverlay.classList.add('hidden');
   document.removeEventListener('keydown', _onWelcomeKey);
   renderer.domElement.removeEventListener('pointerdown', _onWelcomeTap);
@@ -2370,9 +2375,12 @@ function animate() {
   }
   _emaFrameMs = _emaFrameMs * 0.9 + (_nowTs - _lastFrameTs) * 0.1;
   _lastFrameTs = _nowTs;
-  // Paused while an exhibit is open so an FPS dip can't claw back card resolution, and
-  // during the initial settle window so load-in cost can't trigger a spurious DPR drop.
-  if (_nowTs >= _warmupUntil && !exhibitPhase && !activeExhibit && ++_drsFrame >= _DRS_INTERVAL) {
+  // Paused while an exhibit is open so an FPS dip can't claw back card resolution, during the
+  // initial settle window so load-in cost can't trigger a spurious DPR drop, and while the welcome
+  // card is open — the reveal is a second load-in burst (welcome's own renderer + texture warm-ups)
+  // long after the cold-start window, so judging it would drop resolution then climb back (a visible
+  // "throttle, then stabilise"). _dismissWelcome re-arms _warmupUntil so it re-judges on fresh frames.
+  if (_nowTs >= _warmupUntil && !exhibitPhase && !activeExhibit && !_welcomeOpen && ++_drsFrame >= _DRS_INTERVAL) {
     _drsFrame = 0;
     // First judgement after the settle window: discard the average accumulated during cold-start
     // (module eval + shader compile + first GPU-warmed frames) so those one-time slow frames
@@ -2589,8 +2597,11 @@ function animate() {
   _leaveExhibitRadius();
 
   // Spread queued exhibit warm-up work across frames. Paused while an exhibit is
-  // opening/closing/open so its spin-in animation keeps the full frame budget.
-  if (!exhibitPhase && !activeExhibit) _drainWarmQueue(moving);
+  // opening/closing/open so its spin-in animation keeps the full frame budget, and while the
+  // welcome card is open so the heavy card builds stay out of the (visible, translucent) reveal
+  // pause — they resume the instant the card is dismissed. Proximity preload still warms whatever
+  // the player approaches afterwards, so first-open stays hitch-free.
+  if (!exhibitPhase && !activeExhibit && !_welcomeOpen) _drainWarmQueue(moving);
 
   // Interact (Space / E) and dismiss (Escape — desktop only)
   const eDown = keys['KeyE'] || keys['Space'];
