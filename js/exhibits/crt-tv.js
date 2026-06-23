@@ -53,11 +53,7 @@ const CRT = {
 
 const CRT_SIZE = 3.6;  // overall TV width; every part is a fraction of this
 const CRT_Y    = 1.45; // group-center height — screen sits near eye level
-// Peak intensity of the overhead key light on the TV (decay 1, ~5u away). Desktop runs
-// ACESFilmicToneMapping, which rolls the hot warm core off smoothly; mobile runs NoToneMapping,
-// so the same 32 clamps linearly into a harsh white wash. Mobile is tamed directly to keep the
-// set soft and contained (no exposure lever exists under NoToneMapping). Tune mobile in ~10–18.
-const SPOT_INT = isMobile ? 14 : 32;
+const SPOT_INT = 32;   // peak intensity of the overhead key light on the TV (decay 1, ~5u away)
 const _crtFwd  = new THREE.Vector3();
 
 let crtPhase = null;   // 'opening' | 'open' | 'closing' | null
@@ -442,10 +438,14 @@ function _buildCrtTv() {
   // Dark glossy chassis / recesses — hold their tone under the orb (low roughness).
   const chassisMat = new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: 0.5, metalness: 0.2 });
   const recessMat  = new THREE.MeshStandardMaterial({ color: 0x070809, roughness: 0.4, metalness: 0.1 });
-  // The faceplate self-illuminates from its OWN texture (emissiveMap = the baked panel):
-  // the bright printed marks (labels, number rings, badges) glow so they stay readable in
-  // the recess shadow, while the charcoal base barely lifts — i.e. high text contrast.
-  const panelMat   = new THREE.MeshStandardMaterial({ map: CRT.panelTex, roughness: 0.62, metalness: 0.12, bumpMap: CRT.panelTex, bumpScale: 0.006, emissive: 0xffffff, emissiveMap: CRT.panelTex, emissiveIntensity: 0.5 });
+  // The faceplate is UNLIT (MeshBasic) — it shows the baked panel verbatim, exactly as
+  // designed: crisp bright printed marks (labels, number rings, badges) on the charcoal
+  // base, at full contrast. A lit (MeshStandard) faceplate was fragile on this dark-on-dark
+  // art: under the orb/spot the charcoal base washed to grey (see the lighting-washout rule)
+  // and crushed the text, while in the dim recess the text fell into shadow and vanished.
+  // The genuinely tactile parts (dials/knobs) stay MeshStandard below, so they still shade;
+  // this matches how the SKIN DEEP badge and the vents already render their baked art.
+  const panelMat   = new THREE.MeshBasicMaterial({ map: CRT.panelTex });
   const dialCapMat = new THREE.MeshStandardMaterial({ color: 0x121316, roughness: 0.26, metalness: 0.45 });
   const knobMat    = new THREE.MeshStandardMaterial({ color: 0x8d9097, roughness: 0.58, metalness: 0.18 });
   const pointerMat = new THREE.MeshBasicMaterial({ color: 0xe4e7ea });
@@ -693,6 +693,48 @@ function _buildCrtAssets() {
   CRT._built = true;
 }
 
+// ══ Tone-mapping override (mobile only) ══
+// Desktop already runs ACESFilmicToneMapping, whose smooth highlight rolloff renders the set as
+// the soft, contained look we want. Mobile runs NoToneMapping globally (so the photo exhibits stay
+// punchy), which clamps the warm overhead key linearly — the silver frame snaps to a harsh flat
+// white. While THIS exhibit is open we temporarily give the renderer the same ACES curve + exposure
+// as desktop, then restore NoToneMapping on close so every other mobile exhibit is untouched.
+//
+// Three.js bakes the tone-mapping operator into each compiled shader program, so changing
+// renderer.toneMapping at runtime has NO effect until every affected material is flagged for
+// recompile. Hence the scene-wide needsUpdate sweep below — it runs exactly once on open and once
+// on close (never per-frame); the resulting one-time shader rebuild is masked by the open/close
+// scale animation.
+const CRT_TONEMAP_EXPOSURE = 1.15;   // mirrors the desktop toneMappingExposure set in core.js
+let _savedToneMapping = null, _savedExposure = 1;
+
+// Flag every material in the scene for a shader rebuild so they pick up the new tone mapping.
+function _refreshSceneMaterials() {
+  scene.traverse(o => {
+    const m = o.material;
+    if (!m) return;
+    if (Array.isArray(m)) m.forEach(mm => { if (mm) mm.needsUpdate = true; });
+    else m.needsUpdate = true;
+  });
+}
+function _applyCrtToneMap() {
+  if (!isMobile) return;                 // desktop is already ACES — nothing to do
+  const r = core.renderer;
+  _savedToneMapping = r.toneMapping;
+  _savedExposure    = r.toneMappingExposure;
+  r.toneMapping = THREE.ACESFilmicToneMapping;
+  r.toneMappingExposure = CRT_TONEMAP_EXPOSURE;
+  _refreshSceneMaterials();
+}
+function _restoreCrtToneMap() {
+  if (!isMobile || _savedToneMapping === null) return;
+  const r = core.renderer;
+  r.toneMapping = _savedToneMapping;
+  r.toneMappingExposure = _savedExposure;
+  _savedToneMapping = null;
+  _refreshSceneMaterials();
+}
+
 function _openCrt(px, pz, openYaw) {
   if (crtPhase) return;
   _buildCrtAssets();
@@ -731,6 +773,10 @@ function _openCrt(px, pz, openYaw) {
   scene.add(spot);
   CRT.spot = spot;
   CRT.spotTarget = tgt;
+
+  // Switch the renderer to the desktop ACES curve (mobile only) now that the model + spot are in
+  // the scene, so the sweep recompiles the CRT's own materials along with the room's.
+  _applyCrtToneMap();
 }
 
 function _closeCrt() {
@@ -745,6 +791,7 @@ function _closeCrt() {
     CRT.spot.dispose?.();
     CRT.spot = null; CRT.spotTarget = null;
   }
+  _restoreCrtToneMap();   // mobile: hand NoToneMapping back to the rest of the experience
   crtPhase = null;
   crtT     = 0;
   endExhibitDPR();

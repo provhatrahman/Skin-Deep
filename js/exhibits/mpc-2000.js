@@ -29,7 +29,6 @@ const {
   disposeObject3D: _disposeCrateObject,
   setTriggerFloater, beginExhibitDPR, endExhibitDPR, hidePrompt,
   computeFocusTarget: _computeExhibitFocusTarget, syncCamera: _syncCamera,
-  showFocusEscapeHint: _showFocusEscapeHint, hideFocusEscapeHint: _hideFocusEscapeHint,
   elMmWrap: _elMmWrap, elUi: _elUi, jZone: _jZone,
 } = core;
 
@@ -105,6 +104,11 @@ const MPC_PRESS_DUR = 0.22;
 const _elMpcYt       = document.getElementById('mpc-yt-embed');
 const _elMpcYtIframe = document.getElementById('mpc-yt-iframe');
 const _elMpcYtClose  = document.getElementById('mpc-yt-close');
+
+// Control hints reuse the shared focus-escape-hint banner (only one exhibit is open at a
+// time, so owning its contents here is safe). The MPC drives it with its own copy.
+const _elMpcHint = document.getElementById('focus-escape-hint');
+let _mpcHintTimer = null;
 
 // Mobile tap → pad raycast (desktop uses the arrow-key cursor instead).
 const _padRay = new THREE.Raycaster();
@@ -505,6 +509,7 @@ function _closeMpc() {
   }
   mpcPhase = null;
   mpcT     = 0;
+  _hideMpcHint();
   _elMmWrap.classList.remove('focus-hidden');
   _elUi?.classList.remove('focus-hidden');
   _jZone.classList.remove('focus-hidden');
@@ -515,6 +520,7 @@ function _closeMpc() {
 function _dismissMpc() {
   if (!mpcPhase || mpcPhase === 'closing') return;
   if (mpcFocusPhase) _resetMpcFocus();   // snap the section home so the cached model stays intact
+  _hideMpcHint();
   mpcPhase = 'closing';
   mpcT = 1;
   _restoreExhibitFloater();
@@ -570,7 +576,7 @@ function _startMpcFocus() {
   _refreshMpcFocusTarget();
   mpcFocusPhase = 'focusing';
   mpcFocusT = 0;
-  _hideFocusEscapeHint();
+  _hideMpcHint();
 }
 
 function _startMpcUnfocus() {
@@ -582,7 +588,7 @@ function _startMpcUnfocus() {
   _secFromScale = MPC.section.scale.x;
   mpcFocusPhase = 'unfocusing';
   mpcFocusT = 0;
-  _hideFocusEscapeHint();
+  _hideMpcHint();
 }
 
 // Re-home the section under the cached model with its original local transform.
@@ -598,6 +604,7 @@ function _finishMpcUnfocus() {
   _homeMpcSection();
   mpcFocusPhase = null;
   mpcFocusT = 0;
+  if (mpcPhase === 'open') _showMpcOpenHint();   // back to the unit — re-offer "focus pads"
 }
 
 // Hard reset (on dismiss/close) — snap the section home immediately, no tween.
@@ -609,7 +616,7 @@ function _resetMpcFocus() {
   if (MPC.padHi) MPC.padHi.visible = false;
   mpcFocusPhase = null;
   mpcFocusT = 0;
-  _hideFocusEscapeHint();
+  _hideMpcHint();
 }
 
 function _tickMpcFocus(dt) {
@@ -624,7 +631,7 @@ function _tickMpcFocus(dt) {
     sec.quaternion.copy(_secLerpQuat);
     sec.scale.setScalar(_secFromScale + (_secToScale - _secFromScale) * s);
     _recenterMpcFocus(s);   // ease the screen-centring in with the lift (no pop at settle)
-    if (mpcFocusT >= 1) { mpcFocusPhase = 'focused'; _showFocusEscapeHint(); }
+    if (mpcFocusT >= 1) { mpcFocusPhase = 'focused'; _showMpcFocusHint(); }
   } else if (mpcFocusPhase === 'focused') {
     _refreshMpcFocusTarget();
     sec.position.copy(_secToPos);
@@ -641,6 +648,57 @@ function _tickMpcFocus(dt) {
     sec.scale.setScalar(_secFromScale + (homeScale - _secFromScale) * s);
     if (mpcFocusT >= 1) _finishMpcUnfocus();
   }
+}
+
+// ── CONTROL HINTS ────────────────────────────────────────────────────────────
+// Mirrors core's focus-escape-hint behaviour (show → auto-dim) but with MPC-specific
+// copy so the visitor always knows what to press at each stage.
+const _MPC_HINT_SEP = `<span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`;
+
+function _setMpcHint(html, dimAfter) {
+  if (!_elMpcHint) return;
+  _elMpcHint.innerHTML = html;
+  _elMpcHint.classList.remove('dim');
+  _elMpcHint.classList.add('visible');
+  clearTimeout(_mpcHintTimer);
+  if (dimAfter) _mpcHintTimer = setTimeout(() => _elMpcHint.classList.add('dim'), dimAfter);
+}
+
+function _hideMpcHint() {
+  clearTimeout(_mpcHintTimer);
+  if (_elMpcHint) _elMpcHint.classList.remove('visible', 'dim');
+}
+
+// Unit open, not yet focused — how to bring the pad grid forward.
+function _showMpcOpenHint() {
+  _setMpcHint(isMobile
+    ? `<span class="feh-label">tap to focus the pads</span>`
+    : `<span class="feh-key">spc</span><span class="feh-label">focus pads</span>`,
+    4200);
+}
+
+// Pad grid focused — how to move the cursor, play a pad, and step back.
+function _showMpcFocusHint() {
+  if (isMobile) {
+    _setMpcHint(
+      `<span class="feh-label">tap a pad to play</span>${_MPC_HINT_SEP}<span class="feh-label">tap outside to return</span>`,
+      4600);
+  } else {
+    _setMpcHint(
+      `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span>` +
+      `<span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">select</span>` +
+      `${_MPC_HINT_SEP}<span class="feh-key">spc</span><span class="feh-label">play</span>` +
+      `${_MPC_HINT_SEP}<span class="feh-key">esc</span><span class="feh-label">back</span>`,
+      4600);
+  }
+}
+
+// Clip overlay up — how to dismiss it.
+function _showMpcEmbedHint() {
+  _setMpcHint(isMobile
+    ? `<span class="feh-label">tap outside the video to close</span>`
+    : `<span class="feh-key">esc</span><span class="feh-label">close video</span>`,
+    4200);
 }
 
 // ── PAD SELECTION + TRIGGER ──────────────────────────────────────────────────
@@ -676,7 +734,7 @@ function _showMpcEmbed(idx) {
   if (_elMpcYtIframe && _elMpcYtIframe.src !== url) _elMpcYtIframe.src = url;
   _elMpcYt.classList.add('visible');
   mpcEmbedOn = true;
-  _hideFocusEscapeHint();   // the overlay carries its own close affordance
+  _showMpcEmbedHint();
 }
 
 // Tear the overlay down and stop playback (clearing src halts the video).
@@ -685,7 +743,7 @@ function _hideMpcEmbed() {
   if (_elMpcYt) _elMpcYt.classList.remove('visible');
   if (_elMpcYtIframe) _elMpcYtIframe.src = '';
   mpcEmbedOn = false;
-  if (mpcFocusPhase === 'focused') _showFocusEscapeHint();
+  if (mpcFocusPhase === 'focused') _showMpcFocusHint();
 }
 
 // Fire a pad: select it, kick its press dip, and load its clip.
@@ -784,7 +842,7 @@ registerExhibit({
       mpcT = Math.min(1, mpcT + ctx.dt / OPEN_DUR);
       const s = mpcT * mpcT * (3 - 2 * mpcT);
       if (mpcGroup) mpcGroup.scale.setScalar(0.04 + s * 0.96);
-      if (mpcT >= 1) mpcPhase = 'open';
+      if (mpcT >= 1) { mpcPhase = 'open'; _showMpcOpenHint(); }
     } else if (mpcPhase === 'closing') {
       mpcT = Math.max(0, mpcT - ctx.dt / CLOSE_DUR);
       const s = mpcT * mpcT * (3 - 2 * mpcT);
