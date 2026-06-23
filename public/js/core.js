@@ -1124,7 +1124,7 @@ function _dismissWelcome() {
 function showWelcomeCard() {
   const _divider = `<canvas id="welcome-floaters-canvas"></canvas>`;
   _welcomeBody.innerHTML = isMobile
-    ? `<p>You're inside the Skin Deep digital exhibition: a quiet, expolorable gallery.</p>
+    ? `<p>You're inside the Yaqeen digital exhibition: a quiet, explorable gallery.</p>
        <p>Drift up to any glowing object or spotlight and <b>tap</b> it to open its exhibit.</p>
        ${_divider}
        <p>Inside, <b>swipe</b> to move between pieces and play any media.</p>
