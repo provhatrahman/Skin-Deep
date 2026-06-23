@@ -412,12 +412,44 @@ for (let i = 0; i < MOTE_N; i++) {
   motePos[i*3+2] = (Math.random()-0.5)*22;
   motePhase[i]   = Math.random()*Math.PI*2;
 }
+// Per-particle constant fed to the GPU animation (its original loop index).
+const moteIndex = new Float32Array(MOTE_N);
+for (let i = 0; i < MOTE_N; i++) moteIndex[i] = i;
+
 const moteGeo = new THREE.BufferGeometry();
-moteGeo.setAttribute('position', new THREE.BufferAttribute(motePos, 3));
-const moteMesh = new THREE.Points(moteGeo, new THREE.PointsMaterial({
+moteGeo.setAttribute('position', new THREE.BufferAttribute(motePos, 3)); // bind only — overwritten in the vertex shader
+moteGeo.setAttribute('aPhase', new THREE.BufferAttribute(motePhase, 1));
+moteGeo.setAttribute('aIndex', new THREE.BufferAttribute(moteIndex, 1));
+
+const _moteMat = new THREE.PointsMaterial({
   map: _moteTex, color:0xffe8b0, size:0.014, transparent:true, opacity:0.55,
   sizeAttenuation:true, depthWrite:false, alphaTest:0.01
-}));
+});
+// Animate the motes entirely on the GPU — same drift + player-follow as before, but the
+// position is computed in the vertex shader from a time uniform + per-particle phase/index.
+// This removes the per-frame 3000-iteration JS loop and the 36KB buffer upload; the loop
+// just advances three uniforms. PointsMaterial is kept so the sprite map / sizeAttenuation
+// / fog all stay intact; onBeforeCompile only rewrites where `transformed` comes from.
+const _moteUniforms = { uTime: { value: 0 }, uPlayerX: { value: 0 }, uPlayerZ: { value: 0 } };
+_moteMat.onBeforeCompile = (shader) => {
+  shader.uniforms.uTime    = _moteUniforms.uTime;
+  shader.uniforms.uPlayerX = _moteUniforms.uPlayerX;
+  shader.uniforms.uPlayerZ = _moteUniforms.uPlayerZ;
+  shader.vertexShader =
+    'attribute float aPhase;\nattribute float aIndex;\nuniform float uTime;\nuniform float uPlayerX;\nuniform float uPlayerZ;\n' +
+    shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      [
+        '#include <begin_vertex>',
+        'float _moteP = aPhase + uTime;',
+        'transformed.x = uPlayerX + sin(_moteP * 1.1 + aIndex * 0.7) * 10.0;',
+        'transformed.y = 0.25 + abs(sin(_moteP * 0.6 + aIndex * 0.4)) * 3.5;',
+        'transformed.z = uPlayerZ + cos(_moteP * 0.9 + aIndex * 0.3) * 10.0;'
+      ].join('\n')
+    );
+};
+const moteMesh = new THREE.Points(moteGeo, _moteMat);
+moteMesh.frustumCulled = false; // positions are computed in the shader, so the CPU bounding sphere is stale
 scene.add(moteMesh);
 
 // ══════════════════════════════════════════
@@ -568,6 +600,9 @@ if (isMobile) {
     _mobileLights.push(pl);
   }
 }
+// Reusable nearest-floater list for the mobile light pool — refilled allocation-free each
+// frame inside the main floater loop (replaces a per-frame filter().slice().sort()).
+const _mobileNearest = new Array(_mobileLights.length).fill(null);
 
 // ── DARK ROOM INITIAL STATE ──
 // All floaters start invisible; the beam + reveal animation will bring them in
@@ -1058,6 +1093,9 @@ const _slideOff = new THREE.Vector3();
 let _slideFromScale = 1;
 let _slideToScale = 1;
 const _exhibitRayMeshes = [];
+// Shared scratch for per-frame world→screen projections (prompt + guide dot) — avoids
+// allocating a Vector3 every frame.
+const _projTmp = new THREE.Vector3();
 
 function _syncCamera() {
   const camX = player.position.x - Math.sin(yaw) * 4.6;
@@ -1451,9 +1489,14 @@ function _disposeCrateObject(obj) {
 // Mobile frame-rate governor (caps to 60fps on high-refresh devices)
 let _mobileAcc = 0;
 const _MOBILE_TARGET = 1 / 60;
-// Per-frame counters for throttled subsystems
-let _moteFrame = 0;
+// Per-frame counter for the throttled minimap redraw
 let _mmFrame   = 0;
+// Cached room-light level — lets the floater beam/spot opacities skip their writes when
+// the reveal level is steady (the common case during free roam after reveal completes).
+let _lastRoomLight = -1;
+// Cached per-frame DOM state — only touch the DOM when the value actually changes.
+let _promptLastX = -1, _promptLastY = -1;
+let _keySpaceActive = false;
 
 // ── ADAPTIVE RESOLUTION SCALING ──
 // Measures the interval between processed frames and nudges the render DPR up/down
@@ -1771,13 +1814,10 @@ function animate() {
   beamCone.material.opacity = Math.max(0, 1 - _rSmooth * 2.5) * 0.045 * (1 - focusDimT);
   scene.fog.density         = FOG_BASE + focusDimT * 0.11;
 
-  // Remaining floater beams fade IN with the reveal
-  floaters.forEach((f, i) => {
-    if (i === 0 || !f.beamCone) return;
-    if (f.beam) f.beam.intensity = _roomLight * 6.0;
-    f.beamCone.material.opacity = _roomLight * BEAM_CONE_OPACITY;
-    if (f.floorSpot) f.floorSpot.material.opacity = _roomLight * BEAM_FLOOR_SPOT_OPACITY;
-  });
+  // Beam fade-in is folded into the single floater pass below. Track whether the reveal
+  // level actually changed so those beam writes can be skipped once the room is steady.
+  const _roomLightChanged = Math.abs(_roomLight - _lastRoomLight) > 1e-4;
+  _lastRoomLight = _roomLight;
 
   const _orbDim = 1 - focusDimT * 0.82;
   orbLight.intensity    = (12.0 + Math.sin(t*2.4)*1.2) * _orbDim;
@@ -1789,17 +1829,11 @@ function animate() {
   blobShadow.position.z = player.position.z;
   blobShadow.material.opacity = 0.72 - Math.sin(t*2.7)*0.08;
 
-  // Dust motes drift around player — throttled to every 2nd frame on all platforms
-  _moteFrame++;
-  if (_moteFrame % 2 === 0) {
-    for(let i=0;i<MOTE_N;i++){
-      motePhase[i] += dt*0.04;
-      motePos[i*3]   = player.position.x + Math.sin(motePhase[i]*1.1+i*0.7)*10;
-      motePos[i*3+1] = 0.25 + Math.abs(Math.sin(motePhase[i]*0.6+i*0.4))*3.5;
-      motePos[i*3+2] = player.position.z + Math.cos(motePhase[i]*0.9+i*0.3)*10;
-    }
-    moteGeo.attributes.position.needsUpdate = true;
-  }
+  // Dust motes — animated on the GPU (see moteMesh onBeforeCompile). No CPU loop / upload:
+  // just advance time and feed the player position as uniforms.
+  _moteUniforms.uTime.value   += dt * 0.04;
+  _moteUniforms.uPlayerX.value = player.position.x;
+  _moteUniforms.uPlayerZ.value = player.position.z;
 
   // Particle trail
   if(moving){ spawnAcc+=dt; if(spawnAcc>0.055){spawnP(player.position.x,player.position.z);spawnAcc=0;} }
@@ -1808,9 +1842,13 @@ function animate() {
   // Tutorial step advancement
   if (tutStage === 2 && moving) _tutShow(3);
 
-  // Floaters
+  // Floaters — one indexed pass: bob/spin/track, beam fade-in, proximity glow, nearest
+  // trigger, and (mobile) maintain the N nearest for the shared light pool. Indexed loop +
+  // preallocated nearest list = no per-frame closures or array allocations.
   near.ref=null; near.dist=Infinity;
-  floaters.forEach(f => {
+  for (let k = 0; k < _mobileNearest.length; k++) _mobileNearest[k] = null;
+  for (let fi = 0; fi < floaters.length; fi++) {
+    const f = floaters[fi];
     f.phase += dt;
     const floatY = Math.sin(f.phase*1.3)*0.14;
     f.mesh.position.y = f.baseY + floatY;
@@ -1836,6 +1874,13 @@ function animate() {
       f.floorSpot.position.z = f.mesh.position.z;
     }
 
+    // Beam fade-in with the reveal (was a separate pass) — skipped once the reveal is steady
+    if (_roomLightChanged && fi !== 0 && f.beamCone) {
+      if (f.beam) f.beam.intensity = _roomLight * 6.0;
+      f.beamCone.material.opacity = _roomLight * BEAM_CONE_OPACITY;
+      if (f.floorSpot) f.floorSpot.material.opacity = _roomLight * BEAM_FLOOR_SPOT_OPACITY;
+    }
+
     const dx=player.position.x-f.mesh.position.x, dz=player.position.z-f.mesh.position.z;
     const dist2=dx*dx+dz*dz;
     // Only sqrt when within influence radius (dist < 5 → dist2 < 25); saves 9 sqrts/frame when far
@@ -1851,14 +1896,25 @@ function animate() {
     if(!f._hidden && dist2<near.dist){ near.dist=dist2; if(dist2<EXHIBIT_TRIGGER_R2)near.ref=f; }
     // Advance tutorial when player reaches the octahedron
     if (tutStage === 3 && f === floaters[0] && dist2 < 7.84) _tutShow(4);
-  });
 
-  // Mobile: drive the shared light pool from the nearest floaters
+    // Mobile: insertion into the fixed-size nearest list (ascending _dist2), no allocation
+    if (isMobile && !f._hidden) {
+      for (let k = 0; k < _mobileNearest.length; k++) {
+        const cur = _mobileNearest[k];
+        if (cur === null || dist2 < cur._dist2) {
+          for (let m = _mobileNearest.length - 1; m > k; m--) _mobileNearest[m] = _mobileNearest[m-1];
+          _mobileNearest[k] = f;
+          break;
+        }
+      }
+    }
+  }
+
+  // Mobile: drive the shared light pool from the nearest floaters collected above
   if (isMobile) {
-    const _nearest = floaters.filter(f => !f._hidden).slice().sort((a, b) => a._dist2 - b._dist2);
     for (let i = 0; i < _mobileLights.length; i++) {
       const pl = _mobileLights[i];
-      const f  = _nearest[i];
+      const f  = _mobileNearest[i];
       if (f) {
         pl.position.copy(f.mesh.position);
         pl.color.setHex(f.color);
@@ -1885,14 +1941,16 @@ function animate() {
 
   // Proximity prompt — project above the near object (hidden while any exhibition is open)
   if (near.ref && tutStage >= 3 && iCD <= 0 && !exhibitOpen && !activeExhibit && !_elToast.classList.contains('visible')) {
-    const _wp = new THREE.Vector3();
-    near.ref.mesh.getWorldPosition(_wp);
-    _wp.y += 0.55; // offset just above object
-    _wp.project(camera);
-    const px = ( _wp.x * 0.5 + 0.5) * window.innerWidth;
-    const py = (-_wp.y * 0.5 + 0.5) * window.innerHeight;
-    _elPrompt.style.left = px + 'px';
-    _elPrompt.style.top  = py + 'px';
+    near.ref.mesh.getWorldPosition(_projTmp);
+    _projTmp.y += 0.55; // offset just above object
+    _projTmp.project(camera);
+    const px = ( _projTmp.x * 0.5 + 0.5) * window.innerWidth;
+    const py = (-_projTmp.y * 0.5 + 0.5) * window.innerHeight;
+    if (Math.abs(px - _promptLastX) > 0.5 || Math.abs(py - _promptLastY) > 0.5) {
+      _elPrompt.style.left = px + 'px';
+      _elPrompt.style.top  = py + 'px';
+      _promptLastX = px; _promptLastY = py;
+    }
     if (!_elPrompt.classList.contains('visible')) {
       _elIprLabel.textContent = isMobile ? 'tap' : 'interact';
       const iconEl = _elIprIcon;
@@ -2164,20 +2222,20 @@ function animate() {
     }
   }
 
-  _elKeySpace.classList.toggle('active', !!(near.ref && !activeExhibit) || exhibitCanFocus || !!activeExhibit?.wantsHint?.());
+  const _wantKeyHint = !!(near.ref && !activeExhibit) || exhibitCanFocus || !!activeExhibit?.wantsHint?.();
+  if (_wantKeyHint !== _keySpaceActive) { _elKeySpace.classList.toggle('active', _wantKeyHint); _keySpaceActive = _wantKeyHint; }
 
   renderer.render(scene, camera);
   _tickTutPreview();
   _mmFrame++;
-  if (!isMobile || _mmFrame % 3 === 0) drawMinimap();
+  if (_mmFrame % (isMobile ? 3 : 2) === 0) drawMinimap();
 
   // Position guide dots at the orb's screen projection
   if ((tutStage <= 1 && _tutGuideDot.classList.contains('visible')) || _exhPanGuideOn) {
-    const _orbWorld = new THREE.Vector3();
-    orbMesh.getWorldPosition(_orbWorld);
-    _orbWorld.project(camera);
-    const sx = ( _orbWorld.x * 0.5 + 0.5) * window.innerWidth;
-    const sy = (-_orbWorld.y * 0.5 + 0.5) * window.innerHeight;
+    orbMesh.getWorldPosition(_projTmp);
+    _projTmp.project(camera);
+    const sx = ( _projTmp.x * 0.5 + 0.5) * window.innerWidth;
+    const sy = (-_projTmp.y * 0.5 + 0.5) * window.innerHeight;
     if (tutStage <= 1 && _tutGuideDot.classList.contains('visible')) {
       _tutGuideDot.style.left = (sx - 10) + 'px';
       _tutGuideDot.style.top  = (sy - 10) + 'px';
@@ -2214,6 +2272,29 @@ const MM_CX    = MM_SIZE / 2;
 const MM_CY    = MM_SIZE / 2;
 const MM_R     = MM_SIZE / 2 - 1;
 
+// Per-floater dot colours are constant — build the rgba strings once instead of
+// allocating 18 template strings every redraw.
+const _mmDotFill = floaterData.map(fd => `rgba(${(fd.color>>16)&0xff},${(fd.color>>8)&0xff},${fd.color&0xff},0.18)`);
+const _mmDotCore = floaterData.map(fd => `rgba(${(fd.color>>16)&0xff},${(fd.color>>8)&0xff},${fd.color&0xff},0.9)`);
+
+// Pre-bake the player marker (triangle + glow) once, so the per-frame redraw avoids
+// canvas shadowBlur — one of the most expensive 2d ops — and just drawImage's it.
+const _mmMarker = document.createElement('canvas');
+_mmMarker.width = _mmMarker.height = 32;
+(() => {
+  const c = _mmMarker.getContext('2d');
+  c.translate(16, 16);
+  c.beginPath(); c.moveTo(0, -7); c.lineTo(4, 4); c.lineTo(-4, 4); c.closePath();
+  c.fillStyle = 'rgba(255,235,160,0.97)';
+  c.shadowColor = 'rgba(255,180,60,0.9)'; c.shadowBlur = 7;
+  c.fill();
+})();
+
+// Dirty-check state — the map only changes when the player moves or turns (floater bob is
+// sub-pixel at this scale), so we skip the redraw entirely while stationary. Seeded to
+// Infinity so the first post-reveal draw always runs (and makes the wrapper visible).
+let _mmLastX = Infinity, _mmLastZ = Infinity, _mmLastYaw = Infinity;
+
 function _mmPt(wx, wz) {
   return [ MM_CX + wx * MM_SCALE, MM_CY + wz * MM_SCALE ];
 }
@@ -2221,6 +2302,12 @@ function _mmPt(wx, wz) {
 function drawMinimap() {
   if (!roomRevealed) return;
   if (!_mmWrap.classList.contains('visible')) _mmWrap.classList.add('visible');
+
+  // Skip the whole redraw when the player hasn't moved or turned since last time.
+  if (Math.abs(player.position.x - _mmLastX) < 1e-3 &&
+      Math.abs(player.position.z - _mmLastZ) < 1e-3 &&
+      Math.abs(yaw - _mmLastYaw) < 1e-3) return;
+  _mmLastX = player.position.x; _mmLastZ = player.position.z; _mmLastYaw = yaw;
 
   const ctx = _mmCtx;
   ctx.clearRect(0, 0, MM_SIZE, MM_SIZE);
@@ -2255,38 +2342,23 @@ function drawMinimap() {
   const [bx1, by1] = toMM( 23,  23);
   ctx.strokeRect(bx0, by0, bx1 - bx0, by1 - by0);
 
-  // Floater dots
+  // Floater dots — colours precomputed once (see _mmDotFill/_mmDotCore)
   floaters.forEach((f, i) => {
-    const col = floaterData[i].color;
-    const cr = (col >> 16) & 0xff;
-    const cg = (col >>  8) & 0xff;
-    const cb =  col        & 0xff;
     const [fx, fz] = toMM(f.mesh.position.x, f.mesh.position.z);
     ctx.beginPath();
     ctx.arc(fx, fz, 4.5, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${cr},${cg},${cb},0.18)`;
+    ctx.fillStyle = _mmDotFill[i];
     ctx.fill();
     ctx.beginPath();
     ctx.arc(fx, fz, 2.2, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${cr},${cg},${cb},0.9)`;
+    ctx.fillStyle = _mmDotCore[i];
     ctx.fill();
   });
 
   ctx.restore(); // end world rotation
 
-  // Player — fixed upward-pointing triangle at canvas centre
-  ctx.save();
-  ctx.translate(MM_CX, MM_CY);
-  ctx.beginPath();
-  ctx.moveTo(0, -7);
-  ctx.lineTo( 4, 4);
-  ctx.lineTo(-4, 4);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(255,235,160,0.97)';
-  ctx.shadowColor = 'rgba(255,180,60,0.9)';
-  ctx.shadowBlur = 7;
-  ctx.fill();
-  ctx.restore();
+  // Player — pre-baked marker (triangle + glow) drawn at canvas centre
+  ctx.drawImage(_mmMarker, MM_CX - 16, MM_CY - 16);
 
   ctx.restore(); // end clip
 
