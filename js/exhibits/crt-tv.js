@@ -91,7 +91,7 @@ function _bakeBtn(x, cx, cy, w, h, fill, r) {
 // glow concentrates in the centre and falls off at the edges (reads as a CRT). Crawls via
 // offset.y in update().
 function makeCrtStaticTex() {
-  const N = 160;
+  const N = 200;
   const c = document.createElement('canvas'); c.width = c.height = N;
   const x = c.getContext('2d');
   const img = x.createImageData(N, N);
@@ -99,15 +99,16 @@ function makeCrtStaticTex() {
   const cx = N / 2, cy = N / 2, maxd = Math.hypot(cx, cy);
   for (let yy = 0; yy < N; yy++) {
     for (let xx = 0; xx < N; xx++) {
-      let v = 70 + Math.random() * 105;
-      if (yy % 2 === 0) v *= 0.55;                            // scanlines
+      // Full-contrast NEUTRAL snow: each grain is an independent grey from near-black to
+      // white. Writing the same value to R/G/B (no per-column phosphor tint) is what keeps it
+      // reading as analogue "snow" — the old aperture-grille tint laid down fixed vertical RGB
+      // stripes that, scrolled by the green emissive, looked like falling Matrix code.
+      let v = Math.random() * 255;
+      if (yy % 2 === 0) v *= 0.7;                             // gentle scanlines (not stripes)
       const vig = Math.max(0, 1 - (Math.hypot(xx - cx, yy - cy) / maxd) * 1.12);
-      v *= 0.22 + 0.78 * vig;                                 // dim toward edges
+      v *= 0.3 + 0.7 * vig;                                   // dim toward edges
       const i = (yy * N + xx) * 4;
-      const ph = xx % 3;                                      // aperture-grille phosphor tint
-      d[i]     = ph === 0 ? v : v * 0.84;
-      d[i + 1] = ph === 1 ? v : v * 0.84;
-      d[i + 2] = ph === 2 ? v : v * 0.84;
+      d[i] = d[i + 1] = d[i + 2] = v;
       d[i + 3] = 255;
     }
   }
@@ -246,9 +247,17 @@ const PANEL_ASPECT = 0.38;   // width / height of the panel plane (must match th
                               // canvas-px radii, so circles stay circular at any aspect.
 
 function makeCrtPanelTex() {
-  const CW = 480, CH = Math.round(CW / PANEL_ASPECT);   // ≈ 1103
-  const c = document.createElement('canvas'); c.width = CW; c.height = CH;
+  // SS = supersample factor. The whole faceplate is authored in a logical 480×1103 space
+  // (every coord, radius, and font size below is in those units), but at 480px the small
+  // labels and number rings rendered soft once the TV scales up in front of the player.
+  // We back the canvas with an SS× denser bitmap and pre-scale the context, so the identical
+  // artwork is rasterised at high resolution — crisp text/controls, no code below changes.
+  const SS = 2.5;
+  const CW = 480, CH = Math.round(CW / PANEL_ASPECT);   // ≈ 1103 (logical design space)
+  const c = document.createElement('canvas');
+  c.width = Math.round(CW * SS); c.height = Math.round(CH * SS);
   const x = c.getContext('2d');
+  x.scale(SS, SS);                                      // draw in logical units at SS× density
   const U = u => u * CW, V = v => v * CH;
   const ink = '#f2f4f8', faint = '#d2d6dd', red = '#ff4636';   // bright marks for contrast in the recess
 
@@ -460,8 +469,10 @@ function _buildCrtTv() {
   const ventMat   = new THREE.MeshBasicMaterial({ map: CRT.ventTex, transparent: true, depthWrite: false });
   const glareMat  = new THREE.MeshBasicMaterial({ map: CRT.glareTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.45 });
   const screenMat = new THREE.MeshStandardMaterial({
-    color: 0x070f0c, roughness: 0.1, metalness: 0.22,
-    emissive: 0x2b4a3a, emissiveMap: CRT.staticTex, emissiveIntensity: 0.45,
+    color: 0x0b0d0c, roughness: 0.1, metalness: 0.22,
+    // Cool near-neutral grey with only a whisper of green (CRT phosphor cast) — a saturated
+    // green here turned the neutral snow back into "green code". The snow is in the map.
+    emissive: 0x44524c, emissiveMap: CRT.staticTex, emissiveIntensity: 0.45,
   });
   CRT.screenMat = screenMat;
 
@@ -851,6 +862,8 @@ registerExhibit({
     if (CRT.spot) CRT.spot.intensity = (crtT * crtT * (3 - 2 * crtT)) * SPOT_INT;
     // Faint static glow — one scalar nudge + a cheap texture crawl (no array writes)
     if (CRT.screenMat) CRT.screenMat.emissiveIntensity = 0.72 + Math.sin(ctx.t * 40) * 0.14 + Math.sin(ctx.t * 7.3) * 0.07;
-    if (CRT.staticTex) CRT.staticTex.offset.y = (ctx.t * 0.6) % 1;
+    // Jump the noise tile to a fresh random region each frame so the snow re-samples (flicker)
+    // instead of scrolling a fixed pattern downward — a clean vertical scroll read as Matrix rain.
+    if (CRT.staticTex) { CRT.staticTex.offset.x = Math.random(); CRT.staticTex.offset.y = Math.random(); }
   },
 });
