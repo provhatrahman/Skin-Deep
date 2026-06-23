@@ -539,14 +539,43 @@ function _buildMpc() {
   return g;
 }
 
+// Per-field build steps — each idempotent (skips a field already built), so they run either
+// all-at-once (_buildMpcAssets, the open-time fallback) or one-per-idle-tick (_mpcIdlePrebuild,
+// the on-approach preload). The face canvas (1024px silkscreen), the screen canvas, and the
+// model are the heavy slices, so each gets its own step.
+function _mpcAssetSteps() {
+  return [
+    () => { if (!MPC.faceTex)   { MPC.faceTex   = makeMpcFaceTex();   _initTex(MPC.faceTex); } },
+    () => { if (!MPC.screenTex) { MPC.screenTex = makeMpcScreenTex(); _initTex(MPC.screenTex); } },
+    () => { if (!MPC.grilleTex) { MPC.grilleTex = makeMpcGrilleTex(); _initTex(MPC.grilleTex); } },
+    () => { if (!MPC.haloTex)   { MPC.haloTex   = makeMpcHaloTex();   _initTex(MPC.haloTex); } },
+    () => { if (!MPC._model)    { MPC._model    = _buildMpc(); } },
+  ];
+}
+
+// Synchronous build — the open-time fallback if the player opens before the idle preload finishes.
 function _buildMpcAssets() {
   if (MPC._built) return;
-  MPC.faceTex   = makeMpcFaceTex();   _initTex(MPC.faceTex);
-  MPC.screenTex = makeMpcScreenTex(); _initTex(MPC.screenTex);
-  MPC.grilleTex = makeMpcGrilleTex(); _initTex(MPC.grilleTex);
-  MPC.haloTex   = makeMpcHaloTex();   _initTex(MPC.haloTex);
-  MPC._model = _buildMpc();
+  const steps = _mpcAssetSteps();
+  for (let i = 0; i < steps.length; i++) steps[i]();
   MPC._built = true;
+}
+
+// On-approach preload (fired once by core's floater-loop proximity hook): build the assets one
+// slice per idle tick — so the first open is instant without a single long hitch during roam.
+let _mpcPrebuilding = false;
+let _mpcUIHidden = false;   // cached focus-hidden state so update() only toggles HUD classes on change
+function _mpcIdlePrebuild() {
+  if (MPC._built || _mpcPrebuilding) return;
+  _mpcPrebuilding = true;
+  const steps = _mpcAssetSteps();
+  let i = 0;
+  const step = () => {
+    if (i >= steps.length) { MPC._built = true; return; }
+    steps[i++]();
+    core.scheduleIdle(step);
+  };
+  core.scheduleIdle(step);
 }
 
 function _openMpc(px, pz, openYaw) {
@@ -592,6 +621,7 @@ function _closeMpc() {
   mpcPhase = null;
   mpcT     = 0;
   _hideMpcHint();
+  _mpcUIHidden = false;
   _elMmWrap.classList.remove('focus-hidden');
   _elUi?.classList.remove('focus-hidden');
   _jZone.classList.remove('focus-hidden');
@@ -1018,13 +1048,22 @@ registerExhibit({
       if (showHi) MPC.padHiMat.opacity = 0.55 + (Math.sin(ctx.t * 4.0) * 0.5 + 0.5) * 0.45;
     }
 
-    // Hide the HUD while the section is held in focus (matches the crate).
+    // Hide the HUD while the section is held in focus (matches the crate). Only touch the DOM
+    // when the state actually flips — not every frame.
     const _focusUIHidden = mpcFocusPhase === 'focusing' || mpcFocusPhase === 'focused';
-    _elMmWrap.classList.toggle('focus-hidden', _focusUIHidden);
-    _elUi?.classList.toggle('focus-hidden', _focusUIHidden);
-    _jZone.classList.toggle('focus-hidden', _focusUIHidden);
+    if (_focusUIHidden !== _mpcUIHidden) {
+      _mpcUIHidden = _focusUIHidden;
+      _elMmWrap.classList.toggle('focus-hidden', _focusUIHidden);
+      _elUi?.classList.toggle('focus-hidden', _focusUIHidden);
+      _jZone.classList.toggle('focus-hidden', _focusUIHidden);
+    }
 
     // Faint LCD glow — one scalar nudge (no array writes, no DOM queries)
     if (MPC.screenMat) MPC.screenMat.emissiveIntensity = 0.5 + Math.sin(ctx.t * 6) * 0.06;
   },
 });
+
+// Pre-build the unit + textures on approach so the first open is instant. core's floater-loop
+// fires this once when the player nears the MPC floater, then nulls it. Falls back to the
+// synchronous _buildMpcAssets() in _openMpc if opened before the idle build finishes.
+if (floaters[MPC.floaterIdx]) floaters[MPC.floaterIdx]._preload = _mpcIdlePrebuild;
