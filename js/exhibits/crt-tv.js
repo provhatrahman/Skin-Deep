@@ -25,7 +25,7 @@
 import { core } from '../core.js';
 
 const {
-  THREE, scene, isMobile, floaters, MAX_ANISO,
+  THREE, scene, camera, renderer, isMobile, floaters, MAX_ANISO,
   CRATE_DIST, OPEN_DUR, CLOSE_DUR,
   registerExhibit,
   initTex: _initTex,
@@ -33,6 +33,8 @@ const {
   restoreFloater: _restoreExhibitFloater,
   disposeObject3D: _disposeCrateObject,
   setTriggerFloater, beginExhibitDPR, endExhibitDPR, setCD, hidePrompt,
+  computeFocusTarget: _computeExhibitFocusTarget, syncCamera: _syncCamera,
+  elMmWrap: _elMmWrap, elUi: _elUi, jZone: _jZone,
 } = core;
 
 const CRT = {
@@ -51,6 +53,13 @@ const CRT = {
   screenMat: null,  // kept so update() can flicker the screen emissive
   spot: null,       // dedicated key light from above the TV (scene-level, not parented)
   spotTarget: null,
+  section: null,    // THREE.Group: screen + control panel, lifts out into focus (like the MPC deck)
+  screen: null,     // screen mesh ref — used to measure the focused content for recentring
+  faceplate: null,  // control-panel faceplate ref — the other measured extent
+  _secLitMats: null,// section-only metals whose emissive ramps up in focus so they read off the spot
+  haloTex: null,    // soft glowing ring drawn around the section (the "ready to focus" cue)
+  halo: null,       // halo mesh framing the section (pulsed in update, hidden once focused)
+  haloMat: null,    // kept so update() can pulse the halo opacity
 };
 
 const CRT_SIZE = 4.6;  // overall TV width; every part is a fraction of this
@@ -61,6 +70,59 @@ const _crtFwd  = new THREE.Vector3();
 let crtPhase = null;   // 'opening' | 'open' | 'closing' | null
 let crtT     = 0;
 let crtGroup = null;
+
+// ── Body proportions + section placement (hoisted to module scope so the section centre
+//    can be derived once and shared between the builder and the focus maths) ──
+const S  = CRT_SIZE;
+const W  = S, H = S * 0.61, D = S * 0.74;  // landscape face (~1.5:1) like the reference, not square
+const fz = D / 2;                          // front face plane (+Z faces the player)
+const woodW = W * 0.06;                    // thin wood end-panels — let the silver front dominate
+const WF = W - 2 * woodW;                  // front-frame span between the wood sides
+
+const sx = -WF * 0.13, sy = H * 0.03;          // screen centre — shifted to claim more width
+const openW = WF * 0.72, openH = openW * 0.82; // BIG screen window
+const bezT = WF * 0.015, bezR = WF * 0.055;    // very thin bezel
+const panelX = WF * 0.378, panelY = H * 0.01;  // control-panel pushed to the right edge
+const PANEL_ASPECT = 0.38;   // width / height of the panel plane (must match the panel geometry/texture below).
+const panelH = H * 0.84, panelW = panelH * PANEL_ASPECT;
+const panelR = panelW * 0.06;
+
+// Combined planar centre + extents of the screen window + control-panel window. The section
+// group's origin sits here so it scales/rotates about itself (mirrors the MPC deck centre).
+const _secMinX = Math.min(sx - openW / 2 - bezT, panelX - panelW / 2 - bezT);
+const _secMaxX = Math.max(sx + openW / 2 + bezT, panelX + panelW / 2 + bezT);
+const _secMinY = Math.min(sy - openH / 2 - bezT, panelY - panelH / 2 - bezT);
+const _secMaxY = Math.max(sy + openH / 2 + bezT, panelY + panelH / 2 + bezT);
+const SEC_CX = (_secMinX + _secMaxX) / 2;
+const SEC_CY = (_secMinY + _secMaxY) / 2;
+const SEC_CZ = fz;                         // front plane (per-mesh Z offsets stay small around it)
+const SEC_W  = _secMaxX - _secMinX;        // combined width  (fed to the focus-fit call)
+const SEC_H  = _secMaxY - _secMinY;        // combined height
+const CRT_FOCUS_DUR    = 0.55;             // lift / settle / return tween (matches the crate's feel)
+const CRT_FOCUS_MARGIN = 1.12;             // >1 leaves breathing room around the focused content
+
+// ── Section-focus state (the screen + panel lift out to front-facing focus) ──
+let crtFocusPhase = null;   // 'focusing' | 'focused' | 'unfocusing' | null
+let crtFocusT     = 0;
+const _secFromPos  = new THREE.Vector3();
+const _secFromQuat = new THREE.Quaternion();
+let   _secFromScale = 1;
+const _secToPos    = new THREE.Vector3();
+const _secToQuat   = new THREE.Quaternion();
+let   _secToScale  = 1;
+const _secLerpQuat = new THREE.Quaternion();
+const _crtSecHomeMat = new THREE.Matrix4().makeTranslation(SEC_CX, SEC_CY, SEC_CZ);
+const _tmpMat   = new THREE.Matrix4();
+const _tmpScale = new THREE.Vector3();
+// Scratch for measuring + recentring the focused content on screen.
+const _focusBox = new THREE.Box3();
+const _focusCtr = new THREE.Vector3();
+const _camDir   = new THREE.Vector3();
+const _toCtr    = new THREE.Vector3();
+const _lateral  = new THREE.Vector3();
+// Unlike the MPC (content on the +Y top, needing a pre-rotation toward the camera), the CRT's
+// content faces +Z — the natural plane-front direction core.computeFocusTarget already orients
+// toward the camera — so NO _faceQuat is applied here.
 
 // ── Bouncing screensaver state (classic DVD-logo edge reflection) ──
 // All in screen-local units, as an offset from the screen centre (_logoBaseX/Y).
@@ -142,6 +204,26 @@ function makeCrtGlareTex() {
   g.addColorStop(1,   'rgba(255,255,255,0)');
   x.fillStyle = g; x.fillRect(-128, -128, 256, 256);
   x.restore();
+  return new THREE.CanvasTexture(c);
+}
+
+// Focus halo — a soft glowing rounded-square ring with a transparent centre, framing the
+// section to signal it's ready to be brought into focus (mirrors the MPC's pad halo). Used
+// additively; the centre shows the screen/panel through it. Small inset so the ring sits
+// right at the section perimeter.
+function makeCrtHaloTex() {
+  const S = 256;
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const x = c.getContext('2d');
+  const inset = S * 0.06;
+  x.strokeStyle = 'rgba(150,225,255,0.95)';
+  x.shadowColor = 'rgba(110,200,255,0.95)';
+  for (let i = 0; i < 4; i++) {
+    x.shadowBlur = 12 + i * 11;
+    x.lineWidth  = 7 - i * 1.3;
+    _rr(x, inset, inset, S - inset * 2, S - inset * 2, 22);
+    x.stroke();
+  }
   return new THREE.CanvasTexture(c);
 }
 
@@ -252,10 +334,9 @@ const PANEL = {
   ovals:     [{ u: 0.115, v: 0.880 }, { u: 0.205, v: 0.880 }, { u: 0.295, v: 0.880 }],
   jacks:     [{ u: 0.80, v: 0.925 }, { u: 0.895, v: 0.925 }],
 };
-const PANEL_ASPECT = 0.38;   // width / height of the panel plane (must match the geometry).
-                              // Narrowed so the control column claims less of the face and the
-                              // screen dominates. All knob/label coords are normalized (u,v) +
-                              // canvas-px radii, so circles stay circular at any aspect.
+// PANEL_ASPECT (width/height of the panel plane) is declared up in the hoisted body-proportions
+// block so the section-centre maths can use it. All knob/label coords are normalized (u,v) +
+// canvas-px radii, so circles stay circular at any aspect.
 
 function makeCrtPanelTex() {
   // SS = supersample factor. The whole faceplate is authored in a logical 480×1103 space
@@ -441,11 +522,8 @@ function _makeTaperedBox(w, h, d, backScale) {
 // cached on CRT._model, reused across opens.
 function _buildCrtTv() {
   const g = new THREE.Group();
-  const S  = CRT_SIZE;
-  const W  = S, H = S * 0.61, D = S * 0.74;  // landscape face (~1.5:1) like the reference, not square
-  const fz = D / 2;                          // front face plane (+Z faces the player)
-  const woodW = W * 0.06;                    // thin wood end-panels — let the silver front dominate
-  const WF = W - 2 * woodW;                  // front-frame span between the wood sides
+  // Body proportions (S/W/H/D/fz/woodW/WF) + window placement (sx/sy/openW/… panelR) are now
+  // hoisted to module scope so the section centre (SEC_*) is derived once and shared.
 
   // ── Materials ──
   const woodMat   = new THREE.MeshStandardMaterial({ color: 0xba864e, map: CRT.woodTex, bumpMap: CRT.woodTex, bumpScale: 0.05, roughness: 0.62, metalness: 0.04 });
@@ -466,15 +544,21 @@ function _buildCrtTv() {
   // The genuinely tactile parts (dials/knobs) stay MeshStandard below, so they still shade;
   // this matches how the SKIN DEEP badge and the vents already render their baked art.
   const panelMat   = new THREE.MeshBasicMaterial({ map: CRT.panelTex });
-  const dialCapMat = new THREE.MeshStandardMaterial({ color: 0x121316, roughness: 0.26, metalness: 0.45 });
-  const knobMat    = new THREE.MeshStandardMaterial({ color: 0x8d9097, roughness: 0.58, metalness: 0.18 });
+  // Section-only metals carry an emissive that's dark/off in the cabinet but ramps up in
+  // focus — lifted toward the camera they leave the overhead spot, so this self-lights them
+  // (emissiveIntensity driven in update). chromeMat is SHARED with cabinet hardware (handle,
+  // antenna), so the section's chrome (bezel + dial rings) uses a dedicated clone instead, or
+  // the whole cabinet would glow too.
+  const chromeSecMat = chromeMat.clone(); chromeSecMat.emissive = new THREE.Color(0x36393f); chromeSecMat.emissiveIntensity = 0;
+  const dialCapMat = new THREE.MeshStandardMaterial({ color: 0x121316, roughness: 0.26, metalness: 0.45, emissive: 0x2a2c30, emissiveIntensity: 0 });
+  const knobMat    = new THREE.MeshStandardMaterial({ color: 0x8d9097, roughness: 0.58, metalness: 0.18, emissive: 0x3a3d44, emissiveIntensity: 0 });
   const pointerMat = new THREE.MeshBasicMaterial({ color: 0xe4e7ea });
-  const jackMat    = new THREE.MeshStandardMaterial({ color: 0x4a4d54, roughness: 0.5, metalness: 0.25 });
+  const jackMat    = new THREE.MeshStandardMaterial({ color: 0x4a4d54, roughness: 0.5, metalness: 0.25, emissive: 0x26282d, emissiveIntensity: 0 });
   // Emissive coloured pops (can't wash out — hue is added on top of the lighting).
   const btnOrangeMat = new THREE.MeshStandardMaterial({ color: 0x2a1402, roughness: 0.34, emissive: 0xff8a24, emissiveIntensity: 0.9 });
   const btnGreenMat  = new THREE.MeshStandardMaterial({ color: 0x05210f, roughness: 0.34, emissive: 0x33d66a, emissiveIntensity: 0.85 });
   const btnBlueMat   = new THREE.MeshStandardMaterial({ color: 0x041826, roughness: 0.34, emissive: 0x36a8ff, emissiveIntensity: 0.9 });
-  const toneTopMat   = new THREE.MeshStandardMaterial({ color: 0x101114, roughness: 0.3, metalness: 0.4 });
+  const toneTopMat   = new THREE.MeshStandardMaterial({ color: 0x101114, roughness: 0.3, metalness: 0.4, emissive: 0x26282d, emissiveIntensity: 0 });
   const ledMat    = new THREE.MeshStandardMaterial({ color: 0x2a1402, roughness: 0.4, emissive: 0xff8a24, emissiveIntensity: 1.7 });
   const badgeMat  = new THREE.MeshBasicMaterial({ map: CRT.badgeTex, transparent: true, depthWrite: false });
   const ventMat   = new THREE.MeshBasicMaterial({ map: CRT.ventTex, transparent: true, depthWrite: false });
@@ -486,6 +570,7 @@ function _buildCrtTv() {
     emissive: 0x44524c, emissiveMap: CRT.staticTex, emissiveIntensity: 0.45,
   });
   CRT.screenMat = screenMat;
+  CRT._secLitMats = [chromeSecMat, dialCapMat, knobMat, toneTopMat, jackMat];
 
   // ── Chassis core + tapered rear tube housing (mostly hidden; gives bulk + dark back) ──
   // Its front face must stay BEHIND the recessed control-panel faceplate (pZ = fz-0.055):
@@ -508,15 +593,9 @@ function _buildCrtTv() {
     g.add(side);
   });
 
-  // ══ Section placement (computed up-front so the silver frame can be CUT with the two
-  //    openings — punching real windows is what makes each module a recess rather than a
-  //    decal on a flat slab). ══
-  const sx = -WF * 0.13, sy = H * 0.03;                  // screen centre — shifted to claim more width
-  const openW = WF * 0.72, openH = openW * 0.82;         // BIG screen window — grown wider/taller so the glass dominates the face
-  const bezT = WF * 0.015, bezR = WF * 0.055;            // very thin bezel so the screen reads as large as possible
-  const panelX = WF * 0.378, panelY = H * 0.01;          // control-panel shrunk + pushed to the right edge
-  const panelH = H * 0.84, panelW = panelH * PANEL_ASPECT;
-  const panelR = panelW * 0.06;
+  // ══ Section placement: sx/sy/openW/openH/bezT/bezR/panelX/panelY/panelW/panelH/panelR are
+  //    hoisted to module scope (used to derive SEC_*). The silver frame is CUT with the two
+  //    openings (absolute model coords); the recessed CONTENT is built into `section` below. ══
 
   // ── Brushed-silver front frame — a true picture-frame: a beveled rounded plate with the
   //    screen window and the control-panel window PUNCHED THROUGH it. The silver sits proud
@@ -533,21 +612,34 @@ function _buildCrtTv() {
   const frame = new THREE.Mesh(frameGeo, frameMat);
   g.add(frame);
 
+  // ══ SECTION — the recessed screen + control-panel CONTENT, grouped so the whole thing can
+  //    lift out of the cabinet into front-facing focus (like the MPC pad deck / a vinyl
+  //    record). The group's origin sits at the combined window centre, so it scales/rotates
+  //    about itself; children are positioned in section-local coords via lx/ly/lz/px/py. The
+  //    silver frame + cabinet shell stay in `g`. ══
+  const section = new THREE.Group();
+  section.position.set(SEC_CX, SEC_CY, SEC_CZ);
+  const lx = X => X - SEC_CX;   // absolute model coord → section-local
+  const ly = Y => Y - SEC_CY;
+  const lz = Z => Z - SEC_CZ;   // SEC_CZ === fz (the front plane)
+
   // ══ SCREEN — recessed into its window ══
   // Dark cavity (covers the window from behind) + a proud chrome bezel rim + the glass set
-  // back inside the mouth, so the screen clearly sits in a well below the silver face.
+  // back inside the mouth, so the screen clearly sits in a well below the silver face. The
+  // cavity moves WITH the section so each module lifts as a solid slab (no empty well over
+  // the chassis), leaving a clean silver picture-frame aperture behind.
   const recess = new THREE.Mesh(new THREE.BoxGeometry(openW + bezT, openH + bezT, 0.14), recessMat);
-  recess.position.set(sx, sy, fz - 0.15);
-  g.add(recess);
+  recess.position.set(lx(sx), ly(sy), lz(fz - 0.15));
+  section.add(recess);
 
   // Chrome rounded bezel rim seated at the front of the window.
   const bezOuter = _roundedRectShape(openW + 2 * bezT, openH + 2 * bezT, bezR + bezT);
   const bezHole = new THREE.Path(); _roundRectInto(bezHole, openW, openH, bezR);
   bezOuter.holes.push(bezHole);
   const bezGeo = new THREE.ExtrudeGeometry(bezOuter, { depth: 0.06, bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.02, bevelSegments: 2, curveSegments: 6 });
-  const bezel = new THREE.Mesh(bezGeo, chromeMat);
-  bezel.position.set(sx, sy, fz - 0.03);
-  g.add(bezel);
+  const bezel = new THREE.Mesh(bezGeo, chromeSecMat);
+  bezel.position.set(lx(sx), ly(sy), lz(fz - 0.03));
+  section.add(bezel);
 
   // Glass — a RECTANGULAR plane that fills the whole screen window (a circular sphere-cap
   // read as an oval and left the corners empty). A gentle parabolic forward bulge gives the
@@ -561,13 +653,14 @@ function _buildCrtTv() {
   }
   screenGeo.computeVertexNormals();
   const screen = new THREE.Mesh(screenGeo, screenMat);
-  screen.position.set(sx, sy, fz - 0.06);   // edges sit back in the well; centre bulges to ~fz-0.01
-  g.add(screen);
+  screen.position.set(lx(sx), ly(sy), lz(fz - 0.06));   // edges sit back in the well; centre bulges to ~fz-0.01
+  section.add(screen);
+  CRT.screen = screen;
 
   const glare = new THREE.Mesh(new THREE.PlaneGeometry(openW * 0.86, openH * 0.86), glareMat);
-  glare.position.set(sx, sy, fz + 0.0);
+  glare.position.set(lx(sx), ly(sy), lz(fz + 0.0));
   glare.renderOrder = 3;
-  g.add(glare);
+  section.add(glare);
 
   // ══ Bouncing "SKIN DEEP" screensaver ══
   // A glowing wordmark that drifts across the snow and reflects off the screen edges (the old
@@ -581,12 +674,14 @@ function _buildCrtTv() {
   });
   logoMat.color.setHSL(logoHue, 0.85, 0.6);
   const logo = new THREE.Mesh(new THREE.PlaneGeometry(logoW, logoH), logoMat);
-  logo.position.set(sx, sy, fz + 0.002);
+  logo.position.set(lx(sx), ly(sy), lz(fz + 0.002));
   logo.renderOrder = 2;
-  g.add(logo);
+  section.add(logo);
   CRT.logoMesh = logo;
-  // Travel bounds keep the whole wordmark inside the glass; seed a diagonal drift.
-  _logoBaseX = sx; _logoBaseY = sy;
+  // Travel bounds keep the whole wordmark inside the glass; seed a diagonal drift. The bounce
+  // base is section-local (the logo now lives in the section), so update()'s _logoBaseX/Y + offset
+  // writes land correctly whether the section is home or lifted into focus.
+  _logoBaseX = lx(sx); _logoBaseY = ly(sy);
   logoHalfX = Math.max(0, scrW / 2 - logoW / 2);
   logoHalfY = Math.max(0, scrH / 2 - logoH / 2);
   logoX = (Math.random() * 2 - 1) * logoHalfX * 0.5;
@@ -600,47 +695,48 @@ function _buildCrtTv() {
   // SKIN DEEP plate — seated on the bottom rail of the chrome screen bezel, centred under
   // the screen, exactly where the reference's "SONY" plate sits.
   const badge = new THREE.Mesh(new THREE.PlaneGeometry(WF * 0.20, WF * 0.0625), badgeMat);
-  badge.position.set(sx, sy - openH / 2 - bezT * 0.9, fz + 0.062);
+  badge.position.set(lx(sx), ly(sy - openH / 2 - bezT * 0.9), lz(fz + 0.062));
   badge.renderOrder = 2;
-  g.add(badge);
+  section.add(badge);
 
   // Power LED on the frame, lower-left of the screen.
   const led = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.02, 12), ledMat);
   led.rotation.x = Math.PI / 2;
-  led.position.set(sx - openW / 2 - bezT - 0.02, sy - openH / 2, fz + 0.02);
-  g.add(led);
+  led.position.set(lx(sx - openW / 2 - bezT - 0.02), ly(sy - openH / 2), lz(fz + 0.02));
+  section.add(led);
 
   // ══ CONTROL PANEL — recessed into its window, baked faceplate + tactile overlays ══
   // (u,v) on the faceplate → local model coords (u:0=left, v:0=top). pZ is set BACK behind
   // the silver face so the dark faceplate sits in a well; the dials/knobs rise from it up
   // toward the rim (just like the reference, where the controls are sunk into the cabinet).
-  const px = u => panelX + (u - 0.5) * panelW;
-  const py = v => panelY + (0.5 - v) * panelH;
-  const pZ = fz - 0.055;
+  const px = u => lx(panelX + (u - 0.5) * panelW);   // (u,v) → section-local
+  const py = v => ly(panelY + (0.5 - v) * panelH);
+  const pZ = lz(fz - 0.055);                          // = -0.055
 
   // Charcoal cavity filling the window from behind + the recessed faceplate plane.
   const panelBox = new THREE.Mesh(new THREE.BoxGeometry(panelW + bezT, panelH + bezT, 0.13), recessMat);
-  panelBox.position.set(panelX, panelY, fz - 0.125);
-  g.add(panelBox);
+  panelBox.position.set(lx(panelX), ly(panelY), lz(fz - 0.125));
+  section.add(panelBox);
   const faceplate = new THREE.Mesh(new THREE.PlaneGeometry(panelW, panelH), panelMat);
-  faceplate.position.set(panelX, panelY, pZ);
-  g.add(faceplate);
+  faceplate.position.set(lx(panelX), ly(panelY), pZ);
+  section.add(faceplate);
+  CRT.faceplate = faceplate;
 
   // ── The two big channel dials ── chrome ring + dark glossy cap + white pointer.
   const ringGeo = new THREE.TorusGeometry(panelW * 0.20, panelW * 0.022, 8, 36);
   const capGeo  = new THREE.CylinderGeometry(panelW * 0.15, panelW * 0.14, 0.07, 36);
   const ptrGeo  = new THREE.BoxGeometry(0.012, panelW * 0.12, 0.012);
   [PANEL.vhfDial, PANEL.uhfDial].forEach(d => {
-    const ring = new THREE.Mesh(ringGeo, chromeMat);
+    const ring = new THREE.Mesh(ringGeo, chromeSecMat);
     ring.position.set(px(d.u), py(d.v), pZ + 0.02);
-    g.add(ring);
+    section.add(ring);
     const cap = new THREE.Mesh(capGeo, dialCapMat);
     cap.rotation.x = Math.PI / 2;
     cap.position.set(px(d.u), py(d.v), pZ + 0.05);
-    g.add(cap);
+    section.add(cap);
     const ptr = new THREE.Mesh(ptrGeo, pointerMat);
     ptr.position.set(px(d.u), py(d.v) + panelW * 0.06, pZ + 0.09);
-    g.add(ptr);
+    section.add(ptr);
   });
 
   // ── Four small knobs (FINE/VOL, CONTRAST, COLOR TONE, COLOR) ──
@@ -650,32 +746,32 @@ function _buildCrtTv() {
     const knob = new THREE.Mesh(smallKnobGeo, knobMat);
     knob.rotation.x = Math.PI / 2;
     knob.position.set(px(k.u), py(k.v), pZ + 0.04);
-    g.add(knob);
+    section.add(knob);
     const notch = new THREE.Mesh(new THREE.BoxGeometry(0.01, panelW * 0.055, 0.02), pointerMat);
     notch.position.set(px(k.u), py(k.v) + panelW * 0.03, pZ + 0.072);
-    g.add(notch);
+    section.add(notch);
   });
   [PANEL.toneKnob, PANEL.colorKnob].forEach(k => {
     const knob = new THREE.Mesh(colorKnobGeo, toneTopMat);
     knob.rotation.x = Math.PI / 2;
     knob.position.set(px(k.u), py(k.v), pZ + 0.04);
-    g.add(knob);
+    section.add(knob);
     const notch = new THREE.Mesh(new THREE.BoxGeometry(0.01, panelW * 0.05, 0.02), pointerMat);
     notch.position.set(px(k.u), py(k.v) + panelW * 0.028, pZ + 0.07);
-    g.add(notch);
+    section.add(notch);
   });
 
   // ── AUTO COLOR AFT pushbutton ──
   const autoBtn = new THREE.Mesh(new THREE.BoxGeometry(panelW * 0.16, panelH * 0.03, 0.035), dialCapMat);
   autoBtn.position.set(px(PANEL.autoBtn.u), py(PANEL.autoBtn.v), pZ + 0.025);
-  g.add(autoBtn);
+  section.add(autoBtn);
 
   // ── Three coloured pushbuttons (orange / green / blue emissive) ──
   const ovalGeo = new THREE.BoxGeometry(panelW * 0.14, panelH * 0.022, 0.03);
   [btnOrangeMat, btnGreenMat, btnBlueMat].forEach((mat, i) => {
     const ov = new THREE.Mesh(ovalGeo, mat);
     ov.position.set(px(PANEL.ovals[i].u), py(PANEL.ovals[i].v), pZ + 0.022);
-    g.add(ov);
+    section.add(ov);
   });
 
   // ── Earphone jacks ──
@@ -684,8 +780,29 @@ function _buildCrtTv() {
     const jk = new THREE.Mesh(jackGeo, jackMat);
     jk.rotation.x = Math.PI / 2;
     jk.position.set(px(j.u), py(j.v), pZ + 0.015);
-    g.add(jk);
+    section.add(jk);
   });
+
+  // ── Focus halo: a glowing frame lying just in front of the section, signalling it's ready
+  //    to be brought into focus. Sized a touch larger than the combined content; pulsed in
+  //    update(). Hidden once focused (and in any non-open phase). ──
+  const halo = new THREE.Mesh(
+    new THREE.PlaneGeometry(SEC_W * 1.08, SEC_H * 1.12),
+    new THREE.MeshBasicMaterial({
+      map: CRT.haloTex, transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    }),
+  );
+  halo.position.set(0, 0, lz(fz + 0.12));
+  halo.renderOrder = 6;
+  halo.visible = false;   // update() reveals it once the unit is fully open
+  section.add(halo);
+  CRT.halo = halo;
+  CRT.haloMat = halo.material;
+
+  // The assembled section joins the cabinet; focus reparents it to the scene and back.
+  g.add(section);
+  CRT.section = section;
 
   // ── Bottom vent slot across the lower silver rail (kept below both punched windows) ──
   const vents = new THREE.Mesh(new THREE.PlaneGeometry(WF * 0.62, H * 0.035), ventMat);
@@ -748,6 +865,7 @@ function _buildCrtAssets() {
   CRT.ventTex   = makeCrtVentTex();   _initTex(CRT.ventTex);
   CRT.badgeTex  = makeCrtBadgeTex();  _initTex(CRT.badgeTex);
   CRT.panelTex  = makeCrtPanelTex();  CRT.panelTex.anisotropy = MAX_ANISO; _initTex(CRT.panelTex);
+  CRT.haloTex   = makeCrtHaloTex();   _initTex(CRT.haloTex);
   CRT._model = _buildCrtTv();
   CRT._built = true;
 }
@@ -841,6 +959,9 @@ function _openCrt(px, pz, openYaw) {
 }
 
 function _closeCrt() {
+  // The section may still be reparented to the scene (mid-focus dismiss) — re-home it so it
+  // travels with the cached model rather than being orphaned / disposed separately.
+  if (crtFocusPhase || (CRT.section && CRT.section.parent !== CRT._model)) _resetCrtFocus();
   if (crtGroup) {
     if (crtGroup.userData.model) crtGroup.remove(crtGroup.userData.model); // keep the cached model
     _disposeCrateObject(crtGroup);
@@ -855,6 +976,10 @@ function _closeCrt() {
   _restoreCrtToneMap();   // mobile: hand NoToneMapping back to the rest of the experience
   crtPhase = null;
   crtT     = 0;
+  _hideCrtHint();
+  _elMmWrap.classList.remove('focus-hidden');
+  _elUi?.classList.remove('focus-hidden');
+  _jZone.classList.remove('focus-hidden');
   endExhibitDPR();
   _restoreExhibitFloater();
   setCD(0.6);
@@ -862,9 +987,189 @@ function _closeCrt() {
 
 function _dismissCrt() {
   if (!crtPhase || crtPhase === 'closing') return;
+  if (crtFocusPhase) _resetCrtFocus();   // snap the section home so the cached model stays intact
+  _hideCrtHint();
   crtPhase = 'closing';
   crtT = 1;
   _restoreExhibitFloater();
+}
+
+// ══ SECTION FOCUS — the screen + control panel lift out of the cabinet, turn flat-on, and
+//    scale up to fill the view (a closer look), reusing the carousel/crate/MPC focus maths. ══
+
+// Live home (world) transform of the section had it stayed inside the model — the unit bobs
+// each frame, so the unfocus tween re-targets this every frame.
+function _crtSectionHomeWorld(outPos, outQuat) {
+  CRT._model.updateWorldMatrix(true, false);
+  _tmpMat.multiplyMatrices(CRT._model.matrixWorld, _crtSecHomeMat);
+  _tmpMat.decompose(outPos, outQuat, _tmpScale);
+  return _tmpScale.x;
+}
+
+function _refreshCrtFocusTarget() {
+  // Inflate the target panel size by the margin so the content fills less than the full
+  // viewport — a clear border so nothing runs off the edge. No _faceQuat: CRT content faces +Z,
+  // which core.computeFocusTarget already turns toward the camera.
+  _secToScale = _computeExhibitFocusTarget(_secToPos, _secToQuat, SEC_W * CRT_FOCUS_MARGIN, SEC_H * CRT_FOCUS_MARGIN);
+}
+
+// Measure where the visible content (screen + faceplate, which bound the full extent) actually
+// lands and slide the section sideways/up so its centre sits on the camera axis — guaranteeing
+// equal blank space regardless of the off-centre window layout or perspective skew.
+function _recenterCrtFocus(w) {
+  if (!CRT.section || !CRT.screen || !CRT.faceplate) return;
+  CRT.section.updateMatrixWorld(true);
+  _focusBox.makeEmpty();
+  _focusBox.expandByObject(CRT.screen);
+  _focusBox.expandByObject(CRT.faceplate);
+  _focusBox.getCenter(_focusCtr);
+
+  camera.getWorldDirection(_camDir);
+  _toCtr.copy(_focusCtr).sub(camera.position);
+  const along = _toCtr.dot(_camDir);                      // depth of the content centre on the view axis
+  _lateral.copy(_toCtr).addScaledVector(_camDir, -along); // its off-axis component
+  CRT.section.position.addScaledVector(_lateral, -(w === undefined ? 1 : w));
+}
+
+function _startCrtFocus() {
+  if (crtFocusPhase || crtPhase !== 'open' || !CRT.section) return;
+  _syncCamera();
+  scene.attach(CRT.section);                 // reparent to world, preserving the section's pose
+  _secFromPos.copy(CRT.section.position);
+  _secFromQuat.copy(CRT.section.quaternion);
+  _secFromScale = CRT.section.scale.x;
+  if (CRT.halo) CRT.halo.visible = false;
+  _refreshCrtFocusTarget();
+  crtFocusPhase = 'focusing';
+  crtFocusT = 0;
+  _hideCrtHint();
+}
+
+function _startCrtUnfocus() {
+  if (crtFocusPhase !== 'focused' || !CRT.section) return;
+  _secFromPos.copy(CRT.section.position);
+  _secFromQuat.copy(CRT.section.quaternion);
+  _secFromScale = CRT.section.scale.x;
+  crtFocusPhase = 'unfocusing';
+  crtFocusT = 0;
+  _hideCrtHint();
+}
+
+// Re-home the section under the cached model with its original local transform.
+function _homeCrtSection() {
+  if (!CRT.section) return;
+  CRT._model.add(CRT.section);
+  CRT.section.position.set(SEC_CX, SEC_CY, SEC_CZ);
+  CRT.section.quaternion.identity();
+  CRT.section.scale.setScalar(1);
+}
+
+function _finishCrtUnfocus() {
+  _homeCrtSection();
+  crtFocusPhase = null;
+  crtFocusT = 0;
+  if (crtPhase === 'open') _showCrtOpenHint();   // back at the cabinet — re-offer "focus screen"
+}
+
+// Hard reset (on dismiss/close) — snap the section home immediately, no tween.
+function _resetCrtFocus() {
+  _homeCrtSection();
+  if (CRT.halo) CRT.halo.visible = false;
+  crtFocusPhase = null;
+  crtFocusT = 0;
+  _hideCrtHint();
+}
+
+function _tickCrtFocus(dt) {
+  if (!crtFocusPhase || !CRT.section) return;
+  const sec = CRT.section;
+  if (crtFocusPhase === 'focusing') {
+    _refreshCrtFocusTarget();
+    crtFocusT = Math.min(1, crtFocusT + dt / CRT_FOCUS_DUR);
+    const s = crtFocusT * crtFocusT * (3 - 2 * crtFocusT);
+    sec.position.lerpVectors(_secFromPos, _secToPos, s);
+    _secLerpQuat.slerpQuaternions(_secFromQuat, _secToQuat, s);
+    sec.quaternion.copy(_secLerpQuat);
+    sec.scale.setScalar(_secFromScale + (_secToScale - _secFromScale) * s);
+    _recenterCrtFocus(s);   // ease the screen-centring in with the lift (no pop at settle)
+    if (crtFocusT >= 1) { crtFocusPhase = 'focused'; _showCrtFocusHint(); }
+  } else if (crtFocusPhase === 'focused') {
+    _refreshCrtFocusTarget();
+    sec.position.copy(_secToPos);
+    sec.quaternion.copy(_secToQuat);
+    sec.scale.setScalar(_secToScale);
+    _recenterCrtFocus(1);   // hold it screen-centred
+  } else if (crtFocusPhase === 'unfocusing') {
+    crtFocusT = Math.min(1, crtFocusT + dt / CRT_FOCUS_DUR);
+    const s = crtFocusT * crtFocusT * (3 - 2 * crtFocusT);
+    const homeScale = _crtSectionHomeWorld(_secToPos, _secToQuat);   // live (the unit bobs)
+    sec.position.lerpVectors(_secFromPos, _secToPos, s);
+    _secLerpQuat.slerpQuaternions(_secFromQuat, _secToQuat, s);
+    sec.quaternion.copy(_secLerpQuat);
+    sec.scale.setScalar(_secFromScale + (homeScale - _secFromScale) * s);
+    if (crtFocusT >= 1) _finishCrtUnfocus();
+  }
+}
+
+// ── CONTROL HINTS ────────────────────────────────────────────────────────────
+// Reuses the shared focus-escape-hint banner (only one exhibit is open at a time) with
+// CRT-specific copy, mirroring the MPC's hint behaviour (show → auto-dim).
+const _elCrtHint = document.getElementById('focus-escape-hint');
+let _crtHintTimer = null;
+
+function _setCrtHint(html, dimAfter) {
+  if (!_elCrtHint) return;
+  _elCrtHint.innerHTML = html;
+  _elCrtHint.classList.remove('dim');
+  _elCrtHint.classList.add('visible');
+  clearTimeout(_crtHintTimer);
+  if (dimAfter) _crtHintTimer = setTimeout(() => _elCrtHint.classList.add('dim'), dimAfter);
+}
+
+function _hideCrtHint() {
+  clearTimeout(_crtHintTimer);
+  if (_elCrtHint) _elCrtHint.classList.remove('visible', 'dim');
+}
+
+// Unit open, not yet focused — how to bring the screen forward. Unlike the MPC (which keeps a
+// glowing halo around its pad deck as a persistent "ready to focus" cue), the CRT has no other
+// affordance, so this discovery prompt stays put (no auto-dim) until the visitor focuses or
+// walks away — otherwise it fades after a few seconds and the focus feature is undiscoverable.
+function _showCrtOpenHint() {
+  _setCrtHint(isMobile
+    ? `<span class="feh-label">tap to focus the screen</span>`
+    : `<span class="feh-key">spc</span><span class="feh-label">focus screen</span>`,
+    0);
+}
+
+// Screen + panel focused — how to step back.
+function _showCrtFocusHint() {
+  _setCrtHint(isMobile
+    ? `<span class="feh-label">tap to return</span>`
+    : `<span class="feh-key">esc</span><span class="feh-label">back</span>`,
+    4600);
+}
+
+// Mobile: a tap while focused returns to the cabinet (focus-open is driven by ctx.eEdge in
+// update(), matching the MPC). A short, stationary touch counts as a tap (same thresholds as core).
+if (isMobile && renderer && renderer.domElement) {
+  const _crtTapStarts = {};
+  renderer.domElement.addEventListener('touchstart', e => {
+    for (const t of e.changedTouches) _crtTapStarts[t.identifier] = { x: t.clientX, y: t.clientY, t: Date.now() };
+  });
+  renderer.domElement.addEventListener('touchend', e => {
+    for (const t of e.changedTouches) {
+      const s = _crtTapStarts[t.identifier];
+      delete _crtTapStarts[t.identifier];
+      if (!s || crtFocusPhase !== 'focused') continue;
+      const dx = t.clientX - s.x, dy = t.clientY - s.y;
+      if (Date.now() - s.t >= 280 || dx * dx + dy * dy >= 225) continue;   // not a tap
+      _startCrtUnfocus();
+    }
+  });
+  renderer.domElement.addEventListener('touchcancel', e => {
+    for (const t of e.changedTouches) delete _crtTapStarts[t.identifier];
+  });
 }
 
 registerExhibit({
@@ -878,19 +1183,25 @@ registerExhibit({
   // and turns the scene into a spotlit TV in a dark room. The dedicated spot does the
   // lighting; the orb is left at only a faint floor (~18%).
   dimsRoom: () => (crtPhase === 'opening' || crtPhase === 'open') ? 0.95 : 0,
+  // Freeze the player while the screen + panel are held in focus (matches the crate / MPC).
+  locksMovement: () => crtFocusPhase === 'focusing' || crtFocusPhase === 'focused',
   update(ctx) {
-    // Escape (desktop) or tap (mobile) dismisses, same as walking out of radius.
-    if (ctx.escEdge && ctx.iCD <= 0 && crtPhase && crtPhase !== 'closing') {
-      _dismissCrt(); hidePrompt(); ctx.setCD(0.3);
-    } else if (ctx.eEdge && isMobile && ctx.iCD <= 0 && crtPhase === 'open') {
-      _dismissCrt(); hidePrompt(); ctx.setCD(0.3);
+    // ── Input ── layered Escape (focus → whole unit); Space/E (desktop) or tap (mobile, via
+    // eEdge) brings the screen + panel into focus.
+    if (ctx.iCD <= 0) {
+      if (ctx.escEdge) {
+        if (crtFocusPhase === 'focused') { _startCrtUnfocus(); hidePrompt(); ctx.setCD(0.35); }
+        else if (crtPhase && crtPhase !== 'closing') { _dismissCrt(); hidePrompt(); ctx.setCD(0.3); }
+      } else if (ctx.eEdge) {
+        if (crtPhase === 'open' && !crtFocusPhase) { _startCrtFocus(); hidePrompt(); ctx.setCD(0.35); }
+      }
     }
     // Open / close scale animation
     if (crtPhase === 'opening') {
       crtT = Math.min(1, crtT + ctx.dt / OPEN_DUR);
       const s = crtT * crtT * (3 - 2 * crtT);
       if (crtGroup) crtGroup.scale.setScalar(0.04 + s * 0.96);
-      if (crtT >= 1) crtPhase = 'open';
+      if (crtT >= 1) { crtPhase = 'open'; _showCrtOpenHint(); }
     } else if (crtPhase === 'closing') {
       crtT = Math.max(0, crtT - ctx.dt / CLOSE_DUR);
       const s = crtT * crtT * (3 - 2 * crtT);
@@ -900,6 +1211,41 @@ registerExhibit({
     if (crtGroup) crtGroup.position.y = CRT_Y + Math.sin(ctx.t * 1.4) * 0.03;
     // Overhead key light ramps in/out with the open animation (crtT smoothstep).
     if (CRT.spot) CRT.spot.intensity = (crtT * crtT * (3 - 2 * crtT)) * SPOT_INT;
+
+    // Focus halo — frames the section while open & idle, signalling it's ready to be brought
+    // into focus. Breathing pulse on opacity + a subtle scale. Hidden during focus (and any
+    // non-open phase). (Mirrors the MPC pad halo.)
+    if (CRT.halo) {
+      if (crtPhase === 'open' && !crtFocusPhase) {
+        CRT.halo.visible = true;
+        CRT.haloMat.opacity = 0.45 + (Math.sin(ctx.t * 3.0) * 0.5 + 0.5) * 0.5;  // 0.45 → 0.95
+        const sc = 1 + Math.sin(ctx.t * 3.0) * 0.02;
+        CRT.halo.scale.set(sc, sc, 1);
+      } else {
+        CRT.halo.visible = false;
+      }
+    }
+
+    // Section focus tween (lift-out / settle / return).
+    _tickCrtFocus(ctx.dt);
+
+    // Self-light the section in focus — ramp emissive on its metals with the lift so the
+    // dials/knobs/bezel read once lifted away from the overhead spot (the screen + faceplate
+    // are emissive/unlit and read regardless).
+    if (CRT._secLitMats) {
+      const lit = crtFocusPhase === 'focused'   ? 1
+                : crtFocusPhase === 'focusing'   ? crtFocusT
+                : crtFocusPhase === 'unfocusing' ? 1 - crtFocusT
+                : 0;
+      for (let i = 0; i < CRT._secLitMats.length; i++) CRT._secLitMats[i].emissiveIntensity = lit;
+    }
+
+    // Hide the HUD while the section is held in focus (matches the crate / MPC).
+    const _focusUIHidden = crtFocusPhase === 'focusing' || crtFocusPhase === 'focused';
+    _elMmWrap.classList.toggle('focus-hidden', _focusUIHidden);
+    _elUi?.classList.toggle('focus-hidden', _focusUIHidden);
+    _jZone.classList.toggle('focus-hidden', _focusUIHidden);
+
     // Faint static glow — one scalar nudge + a cheap texture crawl (no array writes)
     if (CRT.screenMat) CRT.screenMat.emissiveIntensity = 0.72 + Math.sin(ctx.t * 40) * 0.14 + Math.sin(ctx.t * 7.3) * 0.07;
     // Jump the noise tile to a fresh random region each frame so the snow re-samples (flicker)

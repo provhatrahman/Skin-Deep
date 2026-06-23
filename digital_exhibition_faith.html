@@ -219,6 +219,7 @@
     opacity: 1; pointer-events: auto;
     transform: translate(-50%, -50%) scale(1);
   }
+  #mpc-yt-embed:focus { outline: none; }  /* focus is pulled here to keep Escape working — no ring */
   #mpc-yt-frame {
     position: relative; width: 100%; padding-top: 56.25%;  /* 16:9 */
     border-radius: 12px; overflow: hidden;
@@ -227,6 +228,25 @@
   #mpc-yt-frame iframe {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; display: block;
   }
+  /* Loading facade: the pad thumbnail + spinner paint instantly over the iframe while the
+     player downloads, then crossfade out once it's ready (#mpc-yt-frame gets .loaded). */
+  #mpc-yt-poster {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background: #0a0806 center / cover no-repeat;
+    transition: opacity 0.28s ease;
+  }
+  #mpc-yt-spin {
+    position: absolute; top: 50%; left: 50%; z-index: 2; pointer-events: none;
+    width: 42px; height: 42px; margin: -21px 0 0 -21px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.16);
+    border-top-color: rgba(255,185,90,0.95);   /* amber accent — matches the pad halo */
+    box-shadow: 0 0 14px rgba(255,185,90,0.35);
+    animation: mpc-spin 0.8s linear infinite;
+    transition: opacity 0.28s ease;
+  }
+  @keyframes mpc-spin { to { transform: rotate(360deg); } }
+  #mpc-yt-frame.loaded #mpc-yt-poster,
+  #mpc-yt-frame.loaded #mpc-yt-spin { opacity: 0; }
   #mpc-yt-close {
     position: absolute; top: -14px; right: -14px; z-index: 1;
     width: 34px; height: 34px; border-radius: 50%;
@@ -557,7 +577,11 @@
 </div>
 <div id="mpc-yt-embed">
   <button id="mpc-yt-close" aria-label="close">&times;</button>
-  <div id="mpc-yt-frame"><iframe id="mpc-yt-iframe" scrolling="no" frameborder="no" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe></div>
+  <div id="mpc-yt-frame">
+    <iframe id="mpc-yt-iframe" scrolling="no" frameborder="no" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+    <div id="mpc-yt-poster"></div>
+    <div id="mpc-yt-spin"></div>
+  </div>
 </div>
 <button id="crate-prev-btn" class="exhibit-nav-btn" aria-label="previous record">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 18l-6-6 6-6"/></svg>

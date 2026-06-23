@@ -53,10 +53,84 @@ const MPC = {
   padEmbeds: null,  // per-pad embed URL (one media clip per pad)
 };
 
-// Media each pad triggers. One entry per pad (index = row*4 + col, top-left → bottom-right).
-// For now every pad loads the same clip; swap individual entries in as content is added.
-const MPC_YT = 'https://www.youtube.com/embed/0qmO8XouJ2U?rel=0&autoplay=1';
-const MPC_PAD_EMBEDS = new Array(16).fill(MPC_YT);
+// Media each pad triggers — one iframe src per pad, keyed by the pad's PRINTED label.
+// MPC pads count PAD 1 (bottom-left) → PAD 16 (top-right), so index 0 here = PAD 1.
+// YouTube watch links are in their nocookie /embed/ form (autoplay on; lighter first load,
+// pairs with the preconnect below); pad 6 keeps its playlist; pad 2 is a SoundCloud visual
+// player (the iframe src lifted from its embed snippet).
+const MPC_PAD_MEDIA = [
+  'https://www.youtube-nocookie.com/embed/p3gUSymYa3o?rel=0&autoplay=1',                                         // PAD 1
+  'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/playlists/soundcloud%253Aplaylists%253A1962469520&color=%23ff5500&auto_play=true&hide_related=false&show_comments=true&show_user=true&show_reposts=false&show_teaser=true&visual=true', // PAD 2 — SoundCloud "One Take"
+  'https://www.youtube-nocookie.com/embed/XKHMJKwawLM?rel=0&autoplay=1',                                         // PAD 3
+  'https://www.youtube-nocookie.com/embed/GpFixR6aH9A?rel=0&autoplay=1',                                         // PAD 4
+  'https://www.youtube-nocookie.com/embed/1lkWgpujSF0?rel=0&autoplay=1',                                         // PAD 5
+  'https://www.youtube-nocookie.com/embed/MbJmx9DV7r4?rel=0&autoplay=1&list=PLedZ38aTJsKqREK4kZr2aVZ2QBDHJ1UFu', // PAD 6 — playlist
+  'https://www.youtube-nocookie.com/embed/Cwy5eO1lhY0?rel=0&autoplay=1',                                         // PAD 7
+  'https://www.youtube-nocookie.com/embed/R4LB2FKSBUo?rel=0&autoplay=1',                                         // PAD 8
+  'https://www.youtube-nocookie.com/embed/g3EYSN_NweQ?rel=0&autoplay=1',                                         // PAD 9
+  'https://www.youtube-nocookie.com/embed/lo6RiTvzWV4?rel=0&autoplay=1',                                         // PAD 10
+  'https://www.youtube-nocookie.com/embed/123TKp04u9c?rel=0&autoplay=1',                                         // PAD 11
+  'https://www.youtube-nocookie.com/embed/FUk0Zmkb4CM?rel=0&autoplay=1',                                         // PAD 12
+  'https://www.youtube-nocookie.com/embed/4AtZNIW2AHY?rel=0&autoplay=1',                                         // PAD 13
+  'https://www.youtube-nocookie.com/embed/8TGDPaQStT8?rel=0&autoplay=1',                                         // PAD 14
+  'https://www.youtube-nocookie.com/embed/G7j3p6JyfAo?rel=0&autoplay=1',                                         // PAD 15
+  'https://www.youtube-nocookie.com/embed/z8JkQA5Qz-Y?rel=0&autoplay=1',                                         // PAD 16
+];
+
+// Re-key into array order (row-major from the TOP-left pad) so it lines up with MPC.pads[],
+// which the trigger code indexes directly. The geometry maps array idx (ri,ci) →
+// printed pad (3-ri)*4+ci, so invert that here once rather than reshuffling the list above.
+const MPC_PAD_EMBEDS = new Array(16);
+for (let ri = 0; ri < 4; ri++)
+  for (let ci = 0; ci < 4; ci++)
+    MPC_PAD_EMBEDS[ri * 4 + ci] = MPC_PAD_MEDIA[(3 - ri) * 4 + ci];
+
+// Derive a poster image from an embed URL: YouTube → its hqdefault thumbnail (always exists;
+// shown behind the loading player so the press reads as instant). SoundCloud / anything else
+// has no cheap thumbnail → null (the dark frame + spinner stand in). Built once, array-keyed
+// to match MPC_PAD_EMBEDS so _showMpcEmbed can look it up by the same idx.
+function _mpcPoster(url) {
+  const m = url && url.match(/\/embed\/([\w-]+)/);
+  return m ? `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg` : null;
+}
+const MPC_PAD_POSTERS = MPC_PAD_EMBEDS.map(_mpcPoster);
+
+// Origins the clip iframe pulls from. Preconnected once when the unit opens (a few seconds
+// before any pad is pressed) so the first play skips the DNS+TLS+TCP cold start.
+const MPC_PRECONNECT = [
+  'https://www.youtube-nocookie.com',
+  'https://i.ytimg.com',
+  'https://w.soundcloud.com',
+  'https://i1.sndcdn.com',
+];
+let _mpcWarmed = false;   // preconnect injected (once per session)
+let _mpcThumbsQueued = false;   // idle thumbnail preload kicked off (once per session)
+
+// Warm the video origins. Called from open() — the visitor is committed to the MPC and will
+// hit a pad within seconds, so the socket is fresh exactly when needed; visitors who never
+// open the unit pay nothing. Idempotent (guarded), so re-opening doesn't duplicate links.
+function _warmMpcConnections() {
+  if (_mpcWarmed) return;
+  _mpcWarmed = true;
+  for (const href of MPC_PRECONNECT) {
+    const l = document.createElement('link');
+    l.rel = 'preconnect';
+    l.href = href;
+    l.crossOrigin = '';
+    document.head.appendChild(l);
+  }
+}
+
+// Prime the browser cache with the pad thumbnails during idle time so the poster paints with
+// zero delay on press. One image per idle tick (mirrors vinyl's _preloadVinylAssets chain) so
+// it never competes with the frame budget. Runs once per session.
+function _preloadMpcThumbs(i = 0) {
+  if (i === 0) { if (_mpcThumbsQueued) return; _mpcThumbsQueued = true; }
+  if (i >= MPC_PAD_POSTERS.length) return;
+  const src = MPC_PAD_POSTERS[i];
+  if (src) { const img = new Image(); img.src = src; }
+  core.scheduleIdle(() => _preloadMpcThumbs(i + 1));
+}
 
 const MPC_SIZE = 5.6;            // overall body width; every part is a fraction of this
 const MPC_Y    = 2.1;            // group-center height — scaled with MPC_SIZE (~0.38×) so the tilted unit keeps its floor clearance
@@ -102,8 +176,11 @@ const MPC_PRESS_DUR = 0.22;
 
 // Embed overlay DOM (the YouTube iframe that takes over when a pad is triggered).
 const _elMpcYt       = document.getElementById('mpc-yt-embed');
+const _elMpcYtFrame  = document.getElementById('mpc-yt-frame');    // gets .loaded to crossfade poster out
 const _elMpcYtIframe = document.getElementById('mpc-yt-iframe');
+const _elMpcYtPoster = document.getElementById('mpc-yt-poster');   // thumbnail shown while the player loads
 const _elMpcYtClose  = document.getElementById('mpc-yt-close');
+let _mpcLoadTimer = null;   // safety fallback: reveal the player even if iframe.onload never fires
 
 // Control hints reuse the shared focus-escape-hint banner (only one exhibit is open at a
 // time, so owning its contents here is safe). The MPC drives it with its own copy.
@@ -477,6 +554,11 @@ function _openMpc(px, pz, openYaw) {
   _buildMpcAssets();
   beginExhibitDPR();
 
+  // The visitor will hit a pad within seconds — warm the clip origins now (skips the cold
+  // DNS+TLS on first play) and prime the pad thumbnails during idle so the poster is instant.
+  _warmMpcConnections();
+  _preloadMpcThumbs();
+
   const fl = floaters[MPC.floaterIdx];
   setTriggerFloater(fl);
   _setFloaterVisible(fl, false);
@@ -727,21 +809,45 @@ function _resetMpcPads() {
   _mpcPressT = 0;
 }
 
-// Bring the triggered pad's clip up in an iframe overlay.
+// Bring the triggered pad's clip up in an iframe overlay. The pad's thumbnail paints
+// instantly behind a spinner (the "facade") so the press reads as snappy; the live player
+// crossfades in on top once it loads, masking the cold iframe fetch / pad-to-pad reload.
 function _showMpcEmbed(idx) {
   const url = MPC.padEmbeds && MPC.padEmbeds[idx];
   if (!_elMpcYt || !url) return;
-  if (_elMpcYtIframe && _elMpcYtIframe.src !== url) _elMpcYtIframe.src = url;
+
+  // Reset to the loading state (poster + spinner showing) before the player starts fetching.
+  const poster = MPC_PAD_POSTERS[idx];
+  if (_elMpcYtPoster) _elMpcYtPoster.style.backgroundImage = poster ? `url("${poster}")` : 'none';
+  if (_elMpcYtFrame)  _elMpcYtFrame.classList.remove('loaded');
+  clearTimeout(_mpcLoadTimer);
+
+  if (_elMpcYtIframe) {
+    if (_elMpcYtIframe.src !== url) {
+      // Crossfade the facade out when the player document loads; safety timer guarantees the
+      // player is revealed even if onload never fires (flaky network / blocked frame).
+      _elMpcYtIframe.onload = () => { clearTimeout(_mpcLoadTimer); _elMpcYtFrame?.classList.add('loaded'); };
+      _mpcLoadTimer = setTimeout(() => _elMpcYtFrame?.classList.add('loaded'), 4000);
+      _elMpcYtIframe.src = url;
+    } else {
+      _elMpcYtFrame?.classList.add('loaded');   // same clip already loaded — reveal immediately
+    }
+  }
+
   _elMpcYt.classList.add('visible');
   mpcEmbedOn = true;
   _showMpcEmbedHint();
 }
 
-// Tear the overlay down and stop playback (clearing src halts the video).
+// Tear the overlay down and stop playback (clearing src halts the video), and reset the
+// facade so the next press starts from a clean loading state.
 function _hideMpcEmbed() {
   if (!mpcEmbedOn && (!_elMpcYt || !_elMpcYt.classList.contains('visible'))) return;
   if (_elMpcYt) _elMpcYt.classList.remove('visible');
-  if (_elMpcYtIframe) _elMpcYtIframe.src = '';
+  clearTimeout(_mpcLoadTimer);
+  if (_elMpcYtIframe) { _elMpcYtIframe.onload = null; _elMpcYtIframe.src = ''; }
+  if (_elMpcYtFrame)  _elMpcYtFrame.classList.remove('loaded');
+  if (_elMpcYtPoster) _elMpcYtPoster.style.backgroundImage = 'none';
   mpcEmbedOn = false;
   if (mpcFocusPhase === 'focused') _showMpcFocusHint();
 }
@@ -786,6 +892,24 @@ if (_elMpcYtClose) {
   const _close = e => { e.preventDefault(); e.stopPropagation(); _hideMpcEmbed(); };
   _elMpcYtClose.addEventListener('click', _close);
   _elMpcYtClose.addEventListener('touchstart', _close, { passive: false });
+}
+
+// Keyboard Escape can't reach us while the clip iframe holds focus: it's cross-origin, so
+// its keydowns fire in YouTube's/SoundCloud's document, not ours, and core never sees the
+// Escape. When the iframe grabs focus (the player blurs the top window), pull focus back to
+// the overlay so the document receives keys again — the click that moved focus has already
+// registered inside the player, so play/pause still toggles. Guarded on document.hasFocus()
+// so we don't fight a real tab-switch / alt-tab (then the iframe isn't the active element).
+if (_elMpcYt && _elMpcYtIframe) {
+  _elMpcYt.tabIndex = -1;   // focusable target, but not a Tab stop
+  window.addEventListener('blur', () => {
+    if (!mpcEmbedOn) return;
+    setTimeout(() => {
+      if (mpcEmbedOn && document.hasFocus() && document.activeElement === _elMpcYtIframe) {
+        try { _elMpcYt.focus({ preventScroll: true }); } catch (e) {}
+      }
+    }, 0);
+  });
 }
 
 registerExhibit({
