@@ -596,6 +596,16 @@
     font-family: Georgia, serif; font-size: 9px; letter-spacing: 0.18em;
     text-transform: uppercase; color: rgba(255,200,100,0.35);
   }
+  #minimap-progress {
+    text-align: center; margin-top: 2px;
+    font-family: Georgia, serif; font-size: 11px; letter-spacing: 0.16em;
+    color: rgba(255,210,130,0.6);
+    transition: color 0.6s ease, text-shadow 0.6s ease;
+  }
+  #minimap-progress.complete {
+    color: rgba(255,232,150,0.95);
+    text-shadow: 0 0 10px rgba(255,190,80,0.6);
+  }
 
   /* ── SPLASH / LOADING ── painted on first parse (no JS); core.js adds .hidden after ~1s.
      Deliberately minimal and compositor-friendly: a STATIC orb glow (no animation that could
@@ -732,6 +742,7 @@
 <div id="minimap-wrap">
   <canvas id="minimap" width="120" height="120"></canvas>
   <div id="minimap-label">map</div>
+  <div id="minimap-progress" aria-hidden="true">0 / 0</div>
 </div>
 <div id="mobile-controls">
   <div id="joystick-zone">

@@ -566,6 +566,41 @@ const floaterData = [
   { pos:[ -12,1.2,    0], geo:new THREE.TorusKnotGeometry(0.14,0.05,64,8), color:0xff99cc, em:0xcc3388, tex:'weave',   msg:"[EXHIBIT PIECE TRIGGERED]" },
 ];
 
+// ── SEEN MARKER (EYE) ──
+// A small glowing eye — a circle (iris) inside a wide oval — that hovers above an exhibit
+// the visitor has already opened, so completed pieces can be spotted from across the room
+// ("seen this"). A Sprite (always camera-facing) keeps it legible from any angle; one shared
+// texture, per-floater material so each can fade in on its own. Built for every floater but
+// only ever shown for visited exhibits (floater 0 / the welcome piece is never "seen").
+const _seenHaloTex = (() => {
+  const W = 128, H = 72, cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const c = cv.getContext('2d'), cx = W / 2, cy = H / 2;
+  c.shadowColor = 'rgba(255,210,120,0.9)';
+  // Eye outline — a wide oval
+  c.shadowBlur = 8;
+  c.strokeStyle = 'rgba(255,228,150,0.92)';
+  c.lineWidth = 3;
+  c.beginPath();
+  c.ellipse(cx, cy, W * 0.42, H * 0.36, 0, 0, Math.PI * 2);
+  c.stroke();
+  // Iris — a circle inside, with a soft fill
+  c.shadowBlur = 6;
+  c.lineWidth = 2.5;
+  c.beginPath();
+  c.arc(cx, cy, H * 0.22, 0, Math.PI * 2);
+  c.stroke();
+  c.shadowBlur = 0;
+  c.fillStyle = 'rgba(255,225,150,0.22)';
+  c.fill();
+  // Pupil — bright centre dot
+  c.beginPath();
+  c.arc(cx, cy, H * 0.08, 0, Math.PI * 2);
+  c.fillStyle = 'rgba(255,242,185,0.95)';
+  c.fill();
+  return new THREE.CanvasTexture(cv);
+})();
+
 const floaters = [];
 floaterData.forEach(fd => {
   // Main mesh — procedural emissive texture, built SYNCHRONOUSLY here so the material is final
@@ -625,7 +660,19 @@ floaterData.forEach(fd => {
   // object. Floaters sit 11+ units apart while a floater light reaches only ~4.5 units, so the
   // nearest few read identically to one-per-floater — at a fraction of the per-pixel shading cost
   // and a far shorter renderer.compile().
-  floaters.push({ mesh, aura, ring, fShadow, color:fd.color, message:fd.msg, baseY:fd.pos[1], phase:Math.random()*Math.PI*2, rotSpeed:(Math.random()-0.5)*0.02+0.015, texType:fd.tex });
+  // Seen-marker eye — hovers above the piece; hidden until the exhibit is visited (toggled
+  // in the floater loop from f._seen). Own material so it can fade in independently. Scale
+  // keeps the texture's wide-oval aspect (128:72) so the eye isn't squashed.
+  const seenHalo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: _seenHaloTex, color: 0xffe6a0, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
+  }));
+  seenHalo.scale.set(0.34, 0.19, 1.0);
+  seenHalo.position.set(fd.pos[0], fd.pos[1] + 0.7, fd.pos[2]);
+  seenHalo.visible = false;
+  scene.add(seenHalo);
+
+  floaters.push({ mesh, aura, ring, fShadow, seenHalo, color:fd.color, message:fd.msg, baseY:fd.pos[1], phase:Math.random()*Math.PI*2, rotSpeed:(Math.random()-0.5)*0.02+0.015, texType:fd.tex });
 });
 
 // Shared floater light pools — a fixed handful of lights repositioned each frame to the nearest
@@ -1845,6 +1892,53 @@ function registerExhibit(def) {
   _exhibitByFloaterRef.set(fl, def);
 }
 
+// ── SEEN-EXHIBIT TRACKING ──
+// Which exhibitions the visitor has OPENED, so the HUD can show overall progress
+// (n / total under the minimap), recede visited floaters on the minimap, label an
+// approach as a "revisit", and toast once the last one is found. Persisted to
+// localStorage under a versioned key so the state survives reloads / return visits;
+// any storage failure (private mode, partitioned third-party storage in the iframe)
+// degrades silently to session-only.
+const _SEEN_KEY = 'sd_seen_exhibits_v1';
+const _seenExhibits = new Set();
+try {
+  const raw = localStorage.getItem(_SEEN_KEY);
+  if (raw) for (const id of JSON.parse(raw)) _seenExhibits.add(id);
+} catch (e) {}
+
+const _elMmProgress = document.getElementById('minimap-progress');
+let _mmSeenDirty = false;        // force a minimap redraw when seen-state changes while standing still
+let _completionPending = false;  // fire the "all seen" toast once the last exhibit closes
+
+const _isExhibitSeen = (def) => !!def && _seenExhibits.has(def.id);
+
+// Count only ids that map to a still-registered exhibit, so a stale stored id (a renamed
+// exhibit) can never push the tally past the real total (no "9 / 8").
+function _seenCount() {
+  let n = 0;
+  for (const d of _exhibitDefs) if (_seenExhibits.has(d.id)) n++;
+  return n;
+}
+
+function _updateProgressLabel() {
+  if (!_elMmProgress) return;
+  const total = _exhibitDefs.length, seen = _seenCount();
+  _elMmProgress.textContent = total ? `${seen} / ${total}` : '';
+  _elMmProgress.classList.toggle('complete', total > 0 && seen >= total);
+}
+
+function _markExhibitSeen(def) {
+  if (!def || _seenExhibits.has(def.id)) return;
+  _seenExhibits.add(def.id);
+  if (def._floater) def._floater._seen = true;  // drives the floating seen-halo in the loop
+  try { localStorage.setItem(_SEEN_KEY, JSON.stringify([..._seenExhibits])); } catch (e) {}
+  _mmSeenDirty = true;
+  _updateProgressLabel();
+  // Defer the completion toast to dismissal (see the animate() close hook) so it never
+  // surfaces over the exhibit that's still on screen.
+  if (_exhibitDefs.length && _seenCount() >= _exhibitDefs.length) _completionPending = true;
+}
+
 // ── Register the still-inline exhibitions (photo carousel + vinyl crate) ──
 // Photo-carousel exhibitions register from their own data files (js/exhibits/
 // alim-photographer.js, masjid-uncles.js, …) by calling registerPhotoExhibit().
@@ -1924,6 +2018,11 @@ export { core, registerExhibit };
 
 // Called by js/main.js after every exhibition module has registered itself.
 export function start() {
+  // Seed the progress counter now that every exhibition has registered (at module-eval it was
+  // empty), so it shows the right "n / total" the moment the minimap fades in.
+  _updateProgressLabel();
+  // Reflect any localStorage-restored seen-state onto the floaters so their halos appear.
+  for (const d of _exhibitDefs) if (_seenExhibits.has(d.id) && d._floater) d._floater._seen = true;
   // A ~1s splash (loading bar) veils the cold-start entirely: the one-time shader compile, the
   // first GPU-warmed frames, and the camera's settle. Behind it the loop runs normally; when the
   // splash fades we snap the camera to a clean wide pose so the follow-cam glide plays a smooth
@@ -2111,6 +2210,22 @@ function animate() {
       f.floorSpot.position.z = f.mesh.position.z;
     }
 
+    // Seen-marker eye: hovers above visited exhibits so they're spottable from across the room.
+    // Hidden until the piece is opened (f._seen) — and hidden again while ANY exhibition is open
+    // (activeExhibit), so an eye never floats over the dimmed room behind an open exhibit.
+    if (f._seen) {
+      const h = f.seenHalo;
+      if (activeExhibit) {
+        h.visible = false;
+      } else {
+        f._haloFade = Math.min(1, (f._haloFade || 0) + dt * 1.6);
+        h.visible = true;
+        h.position.set(f.mesh.position.x, f.mesh.position.y + 0.7, f.mesh.position.z);
+        const pulse = 0.6 + Math.sin(t * 1.6 + f.phase) * 0.18;
+        h.material.opacity = f._haloFade * pulse * _rSmooth;
+      }
+    }
+
     // Beam fade-in with the reveal — skipped once the reveal is steady. The cone shaft (every
     // floater) and the mobile floor disc fade here; the desktop floor-splash SpotLights are driven
     // by the shared pool below.
@@ -2212,7 +2327,10 @@ function animate() {
       _promptLastX = px; _promptLastY = py;
     }
     if (!_elPrompt.classList.contains('visible')) {
-      _elIprLabel.textContent = isMobile ? 'tap' : 'interact';
+      const _seenHere = _isExhibitSeen(_exhibitByFloaterRef.get(near.ref));
+      _elIprLabel.textContent = _seenHere
+        ? (isMobile ? 'tap to revisit' : 'revisit')
+        : (isMobile ? 'tap' : 'interact');
       const iconEl = _elIprIcon;
       if (isMobile) {
         iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="16" height="16"><path d="M12 3v2M12 19v2M3 12H1M23 12h-2M18.36 5.64l-1.41 1.41M7.05 16.95l-1.41 1.41M18.36 18.36l-1.41-1.41M7.05 7.05L5.64 5.64"/><circle cx="12" cy="12" r="4" fill="rgba(255,180,60,0.15)"/></svg>`;
@@ -2295,6 +2413,7 @@ function animate() {
     if (def) {
       def.open(player.position.x, player.position.z, yaw);
       activeExhibit = def;
+      _markExhibitSeen(def);
       iCD = 0.5;
     } else if (!_exhibitByFloaterRef.has(f)) {
       if (f === floaters[0]) {
@@ -2331,6 +2450,11 @@ function animate() {
     _exhibitCtx.eEdge = eEdge; _exhibitCtx.escEdge = escEdge; _exhibitCtx.iCD = iCD;
     activeExhibit.update?.(_exhibitCtx);
     if (!activeExhibit.isActive()) activeExhibit = null;
+  }
+  // Once the last unseen exhibit has been opened and then closed, congratulate once.
+  if (_completionPending && !activeExhibit) {
+    _completionPending = false;
+    showToast("✦ You've explored every exhibit ✦");
   }
 
   // Exhibition animation tick
@@ -2562,6 +2686,9 @@ const MM_R     = MM_SIZE / 2 - 1;
 // allocating 18 template strings every redraw.
 const _mmDotFill = floaterData.map(fd => `rgba(${(fd.color>>16)&0xff},${(fd.color>>8)&0xff},${fd.color&0xff},0.18)`);
 const _mmDotCore = floaterData.map(fd => `rgba(${(fd.color>>16)&0xff},${(fd.color>>8)&0xff},${fd.color&0xff},0.9)`);
+// Dimmer variants for VISITED exhibits — a ringed, recessed dot so unvisited pieces draw the eye.
+const _mmDotSeenFill = floaterData.map(fd => `rgba(${(fd.color>>16)&0xff},${(fd.color>>8)&0xff},${fd.color&0xff},0.07)`);
+const _mmDotSeenCore = floaterData.map(fd => `rgba(${(fd.color>>16)&0xff},${(fd.color>>8)&0xff},${fd.color&0xff},0.4)`);
 
 // Pre-bake the player marker (triangle + glow) once, so the per-frame redraw avoids
 // canvas shadowBlur — one of the most expensive 2d ops — and just drawImage's it.
@@ -2589,10 +2716,13 @@ function drawMinimap() {
   if (!roomRevealed) return;
   if (!_mmWrap.classList.contains('visible')) _mmWrap.classList.add('visible');
 
-  // Skip the whole redraw when the player hasn't moved or turned since last time.
-  if (Math.abs(player.position.x - _mmLastX) < 1e-3 &&
+  // Skip the whole redraw when the player hasn't moved or turned since last time — unless
+  // seen-state just changed (a piece opened while standing still alters its marker in place).
+  if (!_mmSeenDirty &&
+      Math.abs(player.position.x - _mmLastX) < 1e-3 &&
       Math.abs(player.position.z - _mmLastZ) < 1e-3 &&
       Math.abs(yaw - _mmLastYaw) < 1e-3) return;
+  _mmSeenDirty = false;
   _mmLastX = player.position.x; _mmLastZ = player.position.z; _mmLastYaw = yaw;
 
   const ctx = _mmCtx;
@@ -2631,14 +2761,31 @@ function drawMinimap() {
   // Floater dots — colours precomputed once (see _mmDotFill/_mmDotCore)
   floaters.forEach((f, i) => {
     const [fx, fz] = toMM(f.mesh.position.x, f.mesh.position.z);
-    ctx.beginPath();
-    ctx.arc(fx, fz, 4.5, 0, Math.PI * 2);
-    ctx.fillStyle = _mmDotFill[i];
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(fx, fz, 2.2, 0, Math.PI * 2);
-    ctx.fillStyle = _mmDotCore[i];
-    ctx.fill();
+    if (_isExhibitSeen(_exhibitByFloaterRef.get(f))) {
+      // Visited: recessed core inside a thin gold ring — reads as "done".
+      ctx.beginPath();
+      ctx.arc(fx, fz, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = _mmDotSeenFill[i];
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(fx, fz, 3.4, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,225,150,0.85)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(fx, fz, 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = _mmDotSeenCore[i];
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(fx, fz, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = _mmDotFill[i];
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(fx, fz, 2.2, 0, Math.PI * 2);
+      ctx.fillStyle = _mmDotCore[i];
+      ctx.fill();
+    }
   });
 
   ctx.restore(); // end world rotation
