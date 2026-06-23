@@ -1212,9 +1212,16 @@ function _showCrtYt() {
   if (!_elCrtYt || !_elCrtYtIframe) return;
   const url = CRT_VIDEOS[_crtVidIdx];
   if (!url) return;
-  if (_elCrtYtIframe.src !== url) _elCrtYtIframe.src = url;   // (re)load on focus
-  _fitCrtYtToScreen();
+  // Order matters: SIZE the overlay over the glass and make it visible BEFORE the cross-origin
+  // iframe loads. The box starts at 0×0 (and stays there on the first focus until fit runs); if
+  // the YouTube src is set while the frame is still zero-size, Chromium render-throttles the
+  // cross-origin iframe as "hidden" and — once the app itself is nested inside skindeepmag's
+  // outer iframe — it never recovers when the box is later resized: audio plays but the video
+  // never paints (the WebGL static shows through). Sizing first means the frame is never created
+  // at 0×0. (Top-level localhost tolerates the old order, which is why it only broke on deploy.)
   _elCrtYt.classList.add('visible');
+  _fitCrtYtToScreen();
+  if (_elCrtYtIframe.src !== url) _elCrtYtIframe.src = url;   // (re)load on focus, now at full size
 }
 
 function _hideCrtYt() {
