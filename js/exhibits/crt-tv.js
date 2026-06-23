@@ -501,8 +501,8 @@ function _buildCrtTv() {
   //    openings — punching real windows is what makes each module a recess rather than a
   //    decal on a flat slab). ══
   const sx = -WF * 0.13, sy = H * 0.03;                  // screen centre — shifted to claim more width
-  const openW = WF * 0.65, openH = openW * 0.82;         // BIG screen window — taller to fill the lower band
-  const bezT = WF * 0.028, bezR = WF * 0.055;            // thin bezel so the glass reads larger
+  const openW = WF * 0.72, openH = openW * 0.82;         // BIG screen window — grown wider/taller so the glass dominates the face
+  const bezT = WF * 0.015, bezR = WF * 0.055;            // very thin bezel so the screen reads as large as possible
   const panelX = WF * 0.378, panelY = H * 0.01;          // control-panel shrunk + pushed to the right edge
   const panelH = H * 0.84, panelW = panelH * PANEL_ASPECT;
   const panelR = panelW * 0.06;
