@@ -466,8 +466,12 @@ function _buildCrtTv() {
   CRT.screenMat = screenMat;
 
   // ── Chassis core + tapered rear tube housing (mostly hidden; gives bulk + dark back) ──
+  // Its front face must stay BEHIND the recessed control-panel faceplate (pZ = fz-0.055):
+  // at the old -0.02 offset the chassis front (fz-0.02) poked IN FRONT of the faceplate and
+  // hid the whole baked panel (labels, rings, grille) behind a flat dark box, while the
+  // proud dials/knobs and the SKIN DEEP badge still showed. Pushed back so the panel reads.
   const chassis = new THREE.Mesh(new THREE.BoxGeometry(WF + 0.04, H * 0.96, D * 0.5), chassisMat);
-  chassis.position.set(0, 0, fz - D * 0.25 - 0.02);
+  chassis.position.set(0, 0, fz - D * 0.25 - 0.28);
   g.add(chassis);
   const rearLen = D * 0.56;
   const rear = new THREE.Mesh(_makeTaperedBox(WF * 0.92, H * 0.9, rearLen, 0.66), chassisMat);
