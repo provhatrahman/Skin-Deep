@@ -1319,7 +1319,9 @@ function _openExhibit(ex, px, pz, openYaw) {
     const tex = i < ex.textures.length ? ex.textures[i] : ex.cardTex;
     const { w: panelW, h: panelH } = _fitExhibitSize(_texAspect(tex));
     const geo = new THREE.PlaneGeometry(panelW, panelH);
-    const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
+    // toneMapped:false — skip the room's ACES Filmic curve + exposure boost so the
+    // photo renders 1:1 with its source pixels (no highlight roll-off / desaturation).
+    const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, toneMapped: false });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.userData.exhibitIdx = i;
     mesh.position.set(px + Math.sin(a) * EXHIBIT_ORBIT_R, 2.0, pz + Math.cos(a) * EXHIBIT_ORBIT_R);
