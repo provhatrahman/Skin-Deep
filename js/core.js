@@ -323,7 +323,7 @@ scene.add(ambientLight);
 //  PLAYER / ORB
 // ══════════════════════════════════════════
 const player = new THREE.Group();
-player.position.set(0, 0, -4);
+player.position.set(0, 0, -8.5);
 scene.add(player);
 
 // Core
@@ -435,7 +435,7 @@ _fSpotCtx.fillRect(0, 0, 128, 128);
 const _floaterSpotTex = new THREE.CanvasTexture(_fSpotCanvas);
 
 const floaterData = [
-  { pos:[   0,1.1,    4], geo:new THREE.OctahedronGeometry(0.32),         color:0xffcc44, em:0xff8800, tex:'rune',   msg:"[ROOM OPENED]" },
+  { pos:[   0,1.1,    0], geo:new THREE.OctahedronGeometry(0.32),         color:0xffcc44, em:0xff8800, tex:'rune',   msg:"[ROOM OPENED]" },
   { pos:[ -11,1.2,  -11], geo:new THREE.OctahedronGeometry(0.25),         color:0x88ddff, em:0x2299cc, tex:'crystal', msg:"[EXHIBIT PIECE TRIGGERED]" },
   { pos:[   0,1.0,  -12], geo:new THREE.TetrahedronGeometry(0.28),         color:0xffcc55, em:0xdd8800, tex:'circuit', msg:"[EXHIBIT PIECE TRIGGERED]" },
   { pos:[  11,1.5,  -11], geo:new THREE.TorusGeometry(0.22,0.08,16,48),    color:0xff88aa, em:0xcc2255, tex:'marble',  msg:"[EXHIBIT PIECE TRIGGERED]" },
@@ -533,8 +533,8 @@ floaters.forEach(f => {
 
 // ── BEAM OF LIGHT on first floater (octahedron) ──
 const beamLight = new THREE.SpotLight(0xfff5d0, 6.0, 18, Math.PI / 11, 0.25, 1.5);
-beamLight.position.set(0, 9, 4);
-beamLight.target.position.set(0, 0.5, 4);
+beamLight.position.set(0, 9, 0);
+beamLight.target.position.set(0, 0.5, 0);
 scene.add(beamLight);
 scene.add(beamLight.target);
 
@@ -548,7 +548,7 @@ const beamCone = new THREE.Mesh(
     side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
   })
 );
-beamCone.position.set(0, 4.5, 4);  // midpoint between source (y=9) and floor (y=0)
+beamCone.position.set(0, 4.5, 0);  // midpoint between source (y=9) and floor (y=0)
 scene.add(beamCone);
 
 // ── BEAMS OF LIGHT on remaining floaters (fade in after room reveals) ──
