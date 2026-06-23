@@ -9,7 +9,11 @@ import { start } from './core.js';
 
 import './exhibits/alim-photographer.js';
 import './exhibits/masjid-uncles.js';
+import './exhibits/babajis-britain.js';
+import './exhibits/outsaeda.js';
+import './exhibits/jummah-aesthetics.js';
 import './exhibits/vinyl-crate.js';
 import './exhibits/crt-tv.js';
+import './exhibits/mpc-2000.js';
 
 start();

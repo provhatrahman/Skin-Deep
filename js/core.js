@@ -1668,8 +1668,12 @@ function animate() {
   // Room reveal — progress from 0 (dark) to 1 (fully lit) after first interaction
   if (roomRevealed && revealT < 1) revealT = Math.min(1, revealT + dt * 0.32);
   const _rSmooth = revealT * revealT * (3 - 2 * revealT); // smoothstep
-  const _wantFocusDim = (exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' || exhibitFocusPhase === 'switching'
-                         || activeExhibit?.dimsRoom?.()) ? 1 : 0;
+  // Focus mode forces a full dim. An exhibit's dimsRoom() may instead return a number
+  // in 0..1 to request a *partial* dim (e.g. a light-coloured device that only needs the
+  // orb knocked back a bit, not the room blacked out); a bare truthy still means full.
+  const _exhibitDim = activeExhibit?.dimsRoom?.();
+  const _wantFocusDim = (exhibitFocusPhase === 'focusing' || exhibitFocusPhase === 'focused' || exhibitFocusPhase === 'switching') ? 1
+                      : (typeof _exhibitDim === 'number' ? _exhibitDim : (_exhibitDim ? 1 : 0));
   focusDimT += (_wantFocusDim - focusDimT) * Math.min(1, dt * 5.5);
   const _roomLight = _rSmooth * (1 - focusDimT * 0.94);
   ambientLight.intensity    = _roomLight * 0.15;
