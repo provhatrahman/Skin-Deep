@@ -5,13 +5,19 @@
 
 
 function makeOrbTexture() {
-  const tex = new THREE.TextureLoader().load('orb_tex.webp');
+  // Upload to the GPU as soon as it decodes (via _initTex) instead of on the first frame that
+  // renders the orb — removes a one-time texture-upload hitch right as the scene reveals.
+  const tex = new THREE.TextureLoader().load('orb_tex.webp', t => _initTex(t));
   return tex;
 }
 
 // Generates a distinct procedural emissive pattern for each floater type
 function makeFloaterTex(type) {
-  const S = 128, cv = document.createElement('canvas');
+  // 64px (was 128): these are emissive maps on small, distant geometric objects — 64² is
+  // visually indistinguishable but ~4× cheaper to generate (the crystal/marble/static/cells
+  // generators are O(S²)), so each build fits inside one idle slice and never busts a frame
+  // budget when it runs during the early roam.
+  const S = 64, cv = document.createElement('canvas');
   cv.width = cv.height = S;
   const ctx = cv.getContext('2d');
   ctx.fillStyle = '#000'; ctx.fillRect(0,0,S,S);
@@ -302,7 +308,7 @@ const MAX_ANISO = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth/window.innerHeight, 0.1, 80);
 
 // ── FLOOR ──
-const floorTex = new THREE.TextureLoader().load('tile.webp');
+const floorTex = new THREE.TextureLoader().load('tile.webp', t => _initTex(t));
 floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
 floorTex.repeat.set(4.5, 4.5);
 floorTex.generateMipmaps = true;
@@ -317,7 +323,7 @@ floor.rotation.x = -Math.PI / 2;
 scene.add(floor);
 
 // ── ROOM WALLS + CEILING (no bottom face) ──
-const wallTex = new THREE.TextureLoader().load('tile.webp');
+const wallTex = new THREE.TextureLoader().load('tile.webp', t => _initTex(t));
 wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping;
 wallTex.repeat.set(3.8, 3);
 wallTex.generateMipmaps = true;
@@ -510,33 +516,22 @@ const floaterData = [
   { pos:[ -12,1.2,    0], geo:new THREE.TorusKnotGeometry(0.14,0.05,64,8), color:0xff99cc, em:0xcc3388, tex:'weave',   msg:"[EXHIBIT PIECE TRIGGERED]" },
 ];
 
-// Shared 1×1 black placeholder so every floater material is created WITH an emissiveMap.
-// The shader program then already carries the USE_EMISSIVEMAP define, so swapping in the
-// real procedural texture during idle (below) reuses the cached program — a cheap upload,
-// not a GPU recompile. Black = no emission, so even if glimpsed it reads as the base
-// material; the room is dark through reveal anyway, so it's never actually seen.
-const _emissivePlaceholder = (() => {
-  const c = document.createElement('canvas');
-  c.width = c.height = 1;
-  const cx = c.getContext('2d');
-  cx.fillStyle = '#000'; cx.fillRect(0, 0, 1, 1);
-  return new THREE.CanvasTexture(c);
-})();
-
 const floaters = [];
 floaterData.forEach(fd => {
-  // Main mesh — procedural emissive texture. Mobile drops the clearcoat layer
-  // (MeshStandardMaterial) to roughly halve the per-pixel BRDF cost. The real emissive
-  // texture is generated lazily after first paint (see the idle build below) — at create
-  // time the material carries the shared placeholder so the program compiles once.
+  // Main mesh — procedural emissive texture, built SYNCHRONOUSLY here (like the single-file
+  // build) so the material is final before the first frame. The previous version deferred the
+  // texture to requestIdleCallback and swapped it in with material.needsUpdate=true; each of
+  // those 9 swaps forced a material re-init on the next render, which showed up as recurring
+  // GPU stalls all through the first ~1.5s of the experience. One cheap upfront build (64px)
+  // costs a few ms during module-eval (before anything is on screen) and removes all of that.
+  // MeshStandardMaterial on both platforms (no MeshPhysicalMaterial clearcoat) keeps the
+  // one-time shader compile short.
   const _matOpts = {
     color:fd.color, emissive:fd.em, emissiveIntensity:1.4,
-    emissiveMap: _emissivePlaceholder,
+    emissiveMap: makeFloaterTex(fd.tex),
     roughness:0.12, metalness:0.55
   };
-  const mesh = new THREE.Mesh(fd.geo, isMobile
-    ? new THREE.MeshStandardMaterial(_matOpts)
-    : new THREE.MeshPhysicalMaterial(Object.assign(_matOpts, { clearcoat:0.45, clearcoatRoughness:0.15 })));
+  const mesh = new THREE.Mesh(fd.geo, new THREE.MeshStandardMaterial(_matOpts));
   mesh.position.set(...fd.pos);
   scene.add(mesh);
 
@@ -576,51 +571,27 @@ floaterData.forEach(fd => {
   fShadow.renderOrder = 2;
   scene.add(fShadow);
 
-  // Desktop: one dedicated point light per floater. Mobile: skipped here — a small
-  // shared pool (created below) lights only the nearest few floaters instead.
-  let fl = null;
-  if (!isMobile) {
-    fl = new THREE.PointLight(fd.color, 0.9, 4.5, 2);
-    fl.position.copy(mesh.position);
-    scene.add(fl);
-  }
-
-  floaters.push({ mesh, aura, ring, fShadow, light:fl, color:fd.color, message:fd.msg, baseY:fd.pos[1], phase:Math.random()*Math.PI*2, rotSpeed:(Math.random()-0.5)*0.02+0.015, texType:fd.tex });
+  // No dedicated per-floater point light on either platform. A small shared pool (created
+  // below) lights only the nearest few floaters — 9 dedicated lights bloated every lit
+  // shader (NUM_POINT_LIGHTS=12 with the 3 orb lights) and pushed renderer.compile() past
+  // a second on integrated GPUs. The pool gives near-identical results for ~3-4 lights.
+  floaters.push({ mesh, aura, ring, fShadow, light:null, color:fd.color, message:fd.msg, baseY:fd.pos[1], phase:Math.random()*Math.PI*2, rotSpeed:(Math.random()-0.5)*0.02+0.015, texType:fd.tex });
 });
 
-// Generate the 9 floater emissive textures across idle slices AFTER first paint, then
-// swap each onto its already-compiled material. Moves ~80-150ms of Voronoi/turbulence
-// canvas work off the initial load. Sequential (one build schedules the next) so we never
-// stack the heavy generators into a single idle period. start() holds the loading veil
-// until this finishes (_floaterTexReady) so the fade runs on a calm main thread and the
-// scene is fully built — no pattern pop-in — when the veil lifts.
-let _floaterTexReady = false;
-(function _buildFloaterTextures(i) {
-  if (i >= floaters.length) { _floaterTexReady = true; return; }
-  _scheduleIdle(() => {
-    const f = floaters[i];
-    const tex = makeFloaterTex(f.texType);
-    f.mesh.material.emissiveMap = tex;
-    f.mesh.material.needsUpdate = true; // program key unchanged → cached program reused, no recompile
-    _initTex(tex);
-    _buildFloaterTextures(i + 1);
-  });
-})(0);
-
-// Mobile shared point-light pool — repositioned each frame to the nearest floaters,
-// so we pay for 3 dynamic lights instead of 9 regardless of how many objects exist.
-const MOBILE_LIGHT_POOL = 3;
-const _mobileLights = [];
-if (isMobile) {
-  for (let i = 0; i < MOBILE_LIGHT_POOL; i++) {
-    const pl = new THREE.PointLight(0xffffff, 0, 4.5, 2);
-    scene.add(pl);
-    _mobileLights.push(pl);
-  }
+// Shared point-light pool (both platforms) — repositioned each frame to the nearest floaters,
+// so we pay for a fixed handful of dynamic lights instead of one per object regardless of how
+// many exist. Desktop gets 4 (a touch richer), mobile 3. Fewer lights = a far shorter
+// renderer.compile() and a much cheaper per-pixel BRDF on integrated GPUs.
+const FLOATER_LIGHT_POOL = isMobile ? 3 : 4;
+const _poolLights = [];
+for (let i = 0; i < FLOATER_LIGHT_POOL; i++) {
+  const pl = new THREE.PointLight(0xffffff, 0, 4.5, 2);
+  scene.add(pl);
+  _poolLights.push(pl);
 }
-// Reusable nearest-floater list for the mobile light pool — refilled allocation-free each
-// frame inside the main floater loop (replaces a per-frame filter().slice().sort()).
-const _mobileNearest = new Array(_mobileLights.length).fill(null);
+// Reusable nearest-floater list for the light pool — refilled allocation-free each frame
+// inside the main floater loop (replaces a per-frame filter().slice().sort()).
+const _poolNearest = new Array(_poolLights.length).fill(null);
 
 // ── DARK ROOM INITIAL STATE ──
 // All floaters start invisible; the beam + reveal animation will bring them in
@@ -652,20 +623,16 @@ beamCone.position.set(0, 4.5, 0);  // midpoint between source (y=9) and floor (y
 scene.add(beamCone);
 
 // ── BEAMS OF LIGHT on remaining floaters (fade in after room reveals) ──
-// Desktop: one SpotLight per floater. Mobile: volumetric cone + soft floor disc per floater.
+// Both platforms: volumetric cone + soft floor disc per floater (no per-floater SpotLight).
+// Only the central octahedron keeps a real SpotLight (beamLight above) — the other 8 spotlights
+// cost a full per-pixel shadow-less spot term in every lit shader (NUM_SPOT_LIGHTS=9) and roughly
+// doubled renderer.compile(); the additive cone + textured floor disc reproduce the look for free.
 const BEAM_CONE_OPACITY = 0.045;
-const BEAM_FLOOR_SPOT_OPACITY = isMobile ? 0.28 : 0;
+const BEAM_FLOOR_SPOT_OPACITY = isMobile ? 0.28 : 0.2;
 floaters.forEach((f, i) => {
   if (i === 0) return; // first floater's beam already created above
   const px = floaterData[i].pos[0], pz = floaterData[i].pos[2];
   const col = floaterData[i].color;
-  if (!isMobile) {
-    const bl = new THREE.SpotLight(col, 0, 18, Math.PI / 11, 0.25, 1.5);
-    bl.position.set(px, 13, pz);
-    bl.target.position.set(px, 0.5, pz);
-    scene.add(bl); scene.add(bl.target);
-    f.beam = bl;
-  }
   const cone = new THREE.Mesh(
     // bottom = distance(13) * tan(PI/11) ≈ 3.82
     new THREE.CylinderGeometry(0.05, 3.82, 13, isMobile ? 12 : 24, 1, true),
@@ -677,20 +644,18 @@ floaters.forEach((f, i) => {
   cone.position.set(px, 6.5, pz);
   scene.add(cone);
   f.beamCone = cone;
-  if (isMobile) {
-    const floorSpot = new THREE.Mesh(
-      new THREE.CircleGeometry(3.55, 24),
-      new THREE.MeshBasicMaterial({
-        map: _floaterSpotTex, color: col, transparent: true, opacity: 0,
-        depthWrite: false, depthTest: true, blending: THREE.NormalBlending
-      })
-    );
-    floorSpot.rotation.x = -Math.PI / 2;
-    floorSpot.position.set(px, 0.003, pz);
-    floorSpot.renderOrder = 1;
-    scene.add(floorSpot);
-    f.floorSpot = floorSpot;
-  }
+  const floorSpot = new THREE.Mesh(
+    new THREE.CircleGeometry(3.55, 24),
+    new THREE.MeshBasicMaterial({
+      map: _floaterSpotTex, color: col, transparent: true, opacity: 0,
+      depthWrite: false, depthTest: true, blending: THREE.NormalBlending
+    })
+  );
+  floorSpot.rotation.x = -Math.PI / 2;
+  floorSpot.position.set(px, 0.003, pz);
+  floorSpot.renderOrder = 1;
+  scene.add(floorSpot);
+  f.floorSpot = floorSpot;
 });
 
 let roomRevealed = false;
@@ -1570,7 +1535,6 @@ const _elAimReticle  = document.getElementById('aim-reticle');
 const _elUi               = document.getElementById('ui');
 const _elMmWrap           = document.getElementById('minimap-wrap');
 const _elFocusEscapeHint  = document.getElementById('focus-escape-hint');
-const _elLoadVeil         = document.getElementById('load-veil');
 
 
 
@@ -1731,39 +1695,21 @@ const core = {
 const _exhibitCtx = { dt: 0, t: 0, eEdge: false, escEdge: false, iCD: 0, setCD: (v) => { iCD = v; } };
 
 export { core, registerExhibit };
-// Called by js/main.js after every exhibition module has registered itself.
-// Fade out the instant loading veil once the scene is actually on screen, then drop
-// it from the DOM. Idempotent — called from a frame counter and a hard time fallback.
-function _revealScene() {
-  if (!_elLoadVeil || _elLoadVeil._revealed) return;
-  _elLoadVeil._revealed = true;
-  _elLoadVeil.classList.add('hidden');
-  setTimeout(() => _elLoadVeil.remove(), 700); // after the 0.6s opacity transition
-}
 
+// Called by js/main.js after every exhibition module has registered itself.
 export function start() {
-  // Give the browser two frames to paint the loading veil and hand its CSS animation to
-  // the compositor thread BEFORE the heavy synchronous work below — otherwise the very
-  // first thing after start() is a long GPU/main-thread stall (shader compile + first
-  // render) that hitches the loading spinner before it ever gets going.
+  // No loading veil/spinner. The scene's first frame IS the near-black room (every floater is
+  // invisible until the first interaction — emissive/aura/ring scale by revealT, which is 0 until
+  // roomRevealed), so there is nothing to "pop" and — crucially — nothing animating that the
+  // one-time shader compile could visibly stutter. The old veil made that compile stall visible
+  // by spinning a loader on top of it; the single-file main build has no veil and enters smoothly,
+  // so we match it. Two rAFs let the black page paint first, then we compile every material once
+  // (cheap now that the scene is down to a handful of lights) so the first painted frame and the
+  // later room reveal are both hitch-free, and start the loop.
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    // Compile every in-scene material now — while the veil still covers the canvas — so the
-    // first rendered frame doesn't hitch on shader compilation at room reveal. Safe because
-    // floater materials carry a stable placeholder emissiveMap (swapped, not added).
     try { renderer.compile(scene, camera); } catch (e) {}
     animate();
-    // Reveal once the deferred floater textures are built AND a couple of frames have
-    // painted — so the veil's fade runs on a calm main thread (no idle-callback jank) and
-    // the scene behind it is complete.
-    let _vf = 0;
-    const _tick = () => {
-      if (_floaterTexReady && ++_vf >= 2) _revealScene();
-      else requestAnimationFrame(_tick);
-    };
-    requestAnimationFrame(_tick);
   }));
-  // Hard fallback so the veil can never stick, even if the deferred work stalls.
-  setTimeout(_revealScene, 2500);
 }
 
 function animate() {
@@ -1881,10 +1827,10 @@ function animate() {
   if (tutStage === 2 && moving) _tutShow(3);
 
   // Floaters — one indexed pass: bob/spin/track, beam fade-in, proximity glow, nearest
-  // trigger, and (mobile) maintain the N nearest for the shared light pool. Indexed loop +
+  // trigger, and maintain the N nearest for the shared light pool. Indexed loop +
   // preallocated nearest list = no per-frame closures or array allocations.
   near.ref=null; near.dist=Infinity;
-  for (let k = 0; k < _mobileNearest.length; k++) _mobileNearest[k] = null;
+  for (let k = 0; k < _poolNearest.length; k++) _poolNearest[k] = null;
   for (let fi = 0; fi < floaters.length; fi++) {
     const f = floaters[fi];
     f.phase += dt;
@@ -1926,46 +1872,48 @@ function animate() {
     f.mesh.material.emissiveIntensity = (1.4 + prox * 3.2) * _rSmooth;
     f.aura.material.opacity = (0.07 + prox * 0.15) * _rSmooth;
     f.ring.material.opacity  = (0.36 + prox * 0.28) * _rSmooth;
-    const _lightI = (0.9 + prox * 2.2) * _rSmooth;
-    if (f.light) f.light.intensity = _lightI; // desktop: per-floater light
-    f._lightI = _lightI;                       // mobile: consumed by the shared pool
+    f._lightI = (0.9 + prox * 2.2) * _rSmooth;  // consumed by the shared light pool
     f._dist2  = dist2;
 
     if(!f._hidden && dist2<near.dist){ near.dist=dist2; if(dist2<EXHIBIT_TRIGGER_R2)near.ref=f; }
     // Proximity preload: warm this exhibit's photos + card as the player approaches, so the
     // carousel is decoded by the time they open it (the _loaded guard makes this a no-op once done).
-    if (f._photoSpec && !f._photoSpec._loaded && dist2 < EXHIBIT_PRELOAD_R2) _loadExhibitTexturesFor(f._photoSpec);
-    // Generic one-shot preload hook any exhibit can attach to its floater (e.g. the CRT
-    // pre-builds its model + textures on approach so its first open is hitch-free).
-    if (f._preload && dist2 < EXHIBIT_PRELOAD_R2) { const fn = f._preload; f._preload = null; fn(); }
+    // Gated on roomRevealed: the start position already sits inside an exhibit's preload radius
+    // (masjid is ~3.5 units away), so without this the heavy card/frame canvas builds + GPU uploads
+    // fire during the tutorial and stutter it. Exhibits can't be opened until the room is revealed
+    // anyway, so warming them only once the tutorial ends loses nothing and keeps startup smooth.
+    if (roomRevealed) {
+      if (f._photoSpec && !f._photoSpec._loaded && dist2 < EXHIBIT_PRELOAD_R2) _loadExhibitTexturesFor(f._photoSpec);
+      // Generic one-shot preload hook any exhibit can attach to its floater (e.g. the CRT
+      // pre-builds its model + textures on approach so its first open is hitch-free).
+      if (f._preload && dist2 < EXHIBIT_PRELOAD_R2) { const fn = f._preload; f._preload = null; fn(); }
+    }
     // Advance tutorial when player reaches the octahedron
     if (tutStage === 3 && f === floaters[0] && dist2 < 7.84) _tutShow(4);
 
-    // Mobile: insertion into the fixed-size nearest list (ascending _dist2), no allocation
-    if (isMobile && !f._hidden) {
-      for (let k = 0; k < _mobileNearest.length; k++) {
-        const cur = _mobileNearest[k];
+    // Insertion into the fixed-size nearest list (ascending _dist2), no allocation
+    if (!f._hidden) {
+      for (let k = 0; k < _poolNearest.length; k++) {
+        const cur = _poolNearest[k];
         if (cur === null || dist2 < cur._dist2) {
-          for (let m = _mobileNearest.length - 1; m > k; m--) _mobileNearest[m] = _mobileNearest[m-1];
-          _mobileNearest[k] = f;
+          for (let m = _poolNearest.length - 1; m > k; m--) _poolNearest[m] = _poolNearest[m-1];
+          _poolNearest[k] = f;
           break;
         }
       }
     }
   }
 
-  // Mobile: drive the shared light pool from the nearest floaters collected above
-  if (isMobile) {
-    for (let i = 0; i < _mobileLights.length; i++) {
-      const pl = _mobileLights[i];
-      const f  = _mobileNearest[i];
-      if (f) {
-        pl.position.copy(f.mesh.position);
-        pl.color.setHex(f.color);
-        pl.intensity = f._lightI;
-      } else {
-        pl.intensity = 0;
-      }
+  // Drive the shared light pool from the nearest floaters collected above
+  for (let i = 0; i < _poolLights.length; i++) {
+    const pl = _poolLights[i];
+    const f  = _poolNearest[i];
+    if (f) {
+      pl.position.copy(f.mesh.position);
+      pl.color.setHex(f.color);
+      pl.intensity = f._lightI;
+    } else {
+      pl.intensity = 0;
     }
   }
 

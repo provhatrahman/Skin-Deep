@@ -562,53 +562,9 @@
     text-transform: uppercase; color: rgba(255,200,100,0.35);
   }
 
-  /* Instant loading veil — painted on first parse (no JS), faded out by core.js
-     once the scene is ready. Covers the blank-then-pop of the synchronous warm-up. */
-  #load-veil {
-    position: fixed; inset: 0; z-index: 9999;
-    background: #000;
-    display: flex; align-items: center; justify-content: center;
-    opacity: 1; transition: opacity 0.7s ease-out;
-    /* Promote to its own GPU layer so the fade is compositor-driven — stays smooth even
-       while the deferred floater-texture builds keep the main thread busy. */
-    will-change: opacity;
-  }
-  #load-veil.hidden { opacity: 0; pointer-events: none; }
-  /* Warm orb glow (identity) — gentle OPACITY breathe; opacity hitches far less visibly
-     than a scale pulse when the GPU is busy initialising WebGL behind the veil. */
-  #load-veil .veil-orb {
-    position: relative;
-    width: 120px; height: 120px; border-radius: 50%;
-    background: radial-gradient(circle at 50% 50%,
-      rgba(255,210,130,0.5) 0%,
-      rgba(255,170,60,0.2) 40%,
-      rgba(255,150,40,0) 70%);
-    animation: veil-breathe 2.4s ease-in-out infinite;
-    will-change: opacity;
-  }
-  /* Thin spinning arc — LINEAR rotation reads as a smooth "loading" cue even if frames
-     drop (a stutter just looks like a brief pause, not a jerk). */
-  #load-veil .veil-orb::after {
-    content: '';
-    position: absolute; left: 50%; top: 50%;
-    width: 52px; height: 52px; margin: -26px 0 0 -26px;
-    border-radius: 50%;
-    border: 2px solid rgba(255,180,70,0.14);
-    border-top-color: rgba(255,228,150,0.92);
-    animation: veil-spin 0.95s linear infinite;
-    will-change: transform;
-  }
-  @keyframes veil-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
-  @keyframes veil-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) {
-    #load-veil .veil-orb { animation: none; opacity: 0.85; }
-    #load-veil .veil-orb::after { animation: none; }
-  }
-
 </style>
 </head>
 <body>
-<div id="load-veil"><div class="veil-orb"></div></div>
 <div id="ui">
   <div style="display:flex;flex-direction:column;gap:6px;align-items:center">
     <div style="display:flex;justify-content:center"><div class="key" id="key-w">W</div></div>

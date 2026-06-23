@@ -1218,5 +1218,8 @@ registerExhibit({
   },
 });
 
-// Warm the crate's procedural textures + box during idle so the first open is instant.
-_scheduleIdle(_preloadVinylAssets);
+// Warm the crate's procedural textures + box on approach so the first open is instant. Attached
+// as the floater's _preload hook (like the CRT and MPC) instead of firing at module-eval: the
+// core only runs _preload once the room is revealed, so the crate's heavy wood/record texture
+// builds + GPU uploads stay out of the loading/tutorial window where they used to stutter startup.
+if (floaters[VINYL.floaterIdx]) floaters[VINYL.floaterIdx]._preload = _preloadVinylAssets;
