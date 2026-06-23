@@ -527,8 +527,10 @@ function _buildCrtTv() {
   bezel.position.set(sx, sy, fz - 0.03);
   g.add(bezel);
 
-  // Convex glass — a shallow spherical cap, set back into the well (below the bezel rim).
-  const capR = S * 1.6, capTheta = 0.22;
+  // Convex glass — a near-flat spherical cap, set back into the well (below the bezel rim).
+  // capTheta is kept SMALL: at 0.22 the cap bulged ~0.14u (≈7% of the screen width) and read
+  // as a glowing green dome poking out of the set; 0.10 gives a subtle ~1.5% CRT curve.
+  const capR = S * 1.6, capTheta = 0.10;
   const screenGeo = new THREE.SphereGeometry(capR, 40, 26, 0, Math.PI * 2, 0, capTheta);
   screenGeo.rotateX(Math.PI / 2);
   screenGeo.translate(0, 0, -capR);
