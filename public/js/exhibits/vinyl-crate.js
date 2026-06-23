@@ -1154,7 +1154,7 @@ registerExhibit({
         _elPrompt.style.left = rx + 'px';
         _elPrompt.style.top  = (ry - 36) + 'px';
         _elIprLabel.textContent = isMobile ? 'tap to focus' : 'focus';
-        _elIprIcon.innerHTML = isMobile ? `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="16" height="16"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="rgba(255,180,60,0.35)"/></svg>` : `<span style="font-family:Georgia,serif;font-size:9px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
+        _elIprIcon.innerHTML = isMobile ? `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="28" height="28"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="rgba(255,180,60,0.35)"/></svg>` : `<span style="font-family:Georgia,serif;font-size:15px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
         _elPrompt.classList.add('visible');
       } else {
         _elPrompt.classList.remove('visible');

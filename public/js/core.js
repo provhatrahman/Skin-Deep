@@ -2333,9 +2333,9 @@ function animate() {
         : (isMobile ? 'tap' : 'interact');
       const iconEl = _elIprIcon;
       if (isMobile) {
-        iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="16" height="16"><path d="M12 3v2M12 19v2M3 12H1M23 12h-2M18.36 5.64l-1.41 1.41M7.05 16.95l-1.41 1.41M18.36 18.36l-1.41-1.41M7.05 7.05L5.64 5.64"/><circle cx="12" cy="12" r="4" fill="rgba(255,180,60,0.15)"/></svg>`;
+        iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="28" height="28"><path d="M12 3v2M12 19v2M3 12H1M23 12h-2M18.36 5.64l-1.41 1.41M7.05 16.95l-1.41 1.41M18.36 18.36l-1.41-1.41M7.05 7.05L5.64 5.64"/><circle cx="12" cy="12" r="4" fill="rgba(255,180,60,0.15)"/></svg>`;
       } else {
-        iconEl.innerHTML = `<span style="font-family:Georgia,serif;font-size:9px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
+        iconEl.innerHTML = `<span style="font-family:Georgia,serif;font-size:15px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
       }
       _elPrompt.classList.add('visible');
     }
@@ -2357,9 +2357,9 @@ function animate() {
       _elIprLabel.textContent = isMobile ? 'tap to focus' : 'focus';
       const iconEl = _elIprIcon;
       if (isMobile) {
-        iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="16" height="16"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="rgba(255,180,60,0.35)"/></svg>`;
+        iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="28" height="28"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="rgba(255,180,60,0.35)"/></svg>`;
       } else {
-        iconEl.innerHTML = `<span style="font-family:Georgia,serif;font-size:9px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
+        iconEl.innerHTML = `<span style="font-family:Georgia,serif;font-size:15px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
       }
       _elPrompt.classList.add('visible');
     } else {
