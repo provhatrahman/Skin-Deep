@@ -60,6 +60,10 @@ const CRT = {
   haloTex: null,    // soft glowing ring drawn around the section (the "ready to focus" cue)
   halo: null,       // halo mesh framing the section (pulsed in update, hidden once focused)
   haloMat: null,    // kept so update() can pulse the halo opacity
+  channelDials: null, // [{group,dir,turnTo}] — VHF(+1)/UHF(-1) dials that step the video list
+  channelHits: null,  // invisible raycast discs over each dial (generous tap targets)
+  dialGlowTex: null,  // soft ring glow texture drawn behind each dial (the "navigate here" cue)
+  dialGlowMat: null,  // shared additive material, pulsed in update() while focused
 };
 
 const CRT_SIZE = 4.6;  // overall TV width; every part is a fraction of this
@@ -224,6 +228,23 @@ function makeCrtHaloTex() {
     _rr(x, inset, inset, S - inset * 2, S - inset * 2, 22);
     x.stroke();
   }
+  return new THREE.CanvasTexture(c);
+}
+
+// Dial navigation glow — a soft cyan ring (transparent centre + edges) used additively behind
+// each channel dial so, once the screen is focused, it reads as "turn me to change channel".
+// Same hue as the focus halo so the interactive language is consistent across the piece.
+function makeCrtDialGlowTex() {
+  const S = 128;
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const x = c.getContext('2d');
+  const cx = S / 2, cy = S / 2, r = S / 2;
+  const g = x.createRadialGradient(cx, cy, r * 0.30, cx, cy, r);
+  g.addColorStop(0,    'rgba(150,225,255,0)');     // clear centre (the dial sits here)
+  g.addColorStop(0.55, 'rgba(150,225,255,0.85)');  // bright ring around the dial rim
+  g.addColorStop(0.78, 'rgba(110,200,255,0.30)');
+  g.addColorStop(1,    'rgba(110,200,255,0)');      // fade out
+  x.fillStyle = g; x.fillRect(0, 0, S, S);
   return new THREE.CanvasTexture(c);
 }
 
@@ -723,20 +744,50 @@ function _buildCrtTv() {
   CRT.faceplate = faceplate;
 
   // ── The two big channel dials ── chrome ring + dark glossy cap + white pointer.
+  // Each dial is its OWN group (positioned at the dial centre, children at relative offsets) so
+  // the whole dial can spin about its screen-facing axis (group.rotation.z) for the channel-turn
+  // feedback. A generous invisible hit disc rides on top of each as the raycast tap target — it
+  // renders nothing (material.visible:false) but still registers pointer hits.
   const ringGeo = new THREE.TorusGeometry(panelW * 0.20, panelW * 0.022, 8, 36);
   const capGeo  = new THREE.CylinderGeometry(panelW * 0.15, panelW * 0.14, 0.07, 36);
   const ptrGeo  = new THREE.BoxGeometry(0.012, panelW * 0.12, 0.012);
-  [PANEL.vhfDial, PANEL.uhfDial].forEach(d => {
+  const hitGeo  = new THREE.CircleGeometry(panelW * 0.26, 24);
+  const hitMat  = new THREE.MeshBasicMaterial({ visible: false });
+  // Shared ring-glow behind each dial — additive, opacity driven in update() (off in the cabinet,
+  // pulses while focused so the dials read as the channel control).
+  const glowGeo = new THREE.PlaneGeometry(panelW * 0.72, panelW * 0.72);
+  const glowMat = new THREE.MeshBasicMaterial({
+    map: CRT.dialGlowTex, transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, opacity: 0,
+  });
+  CRT.dialGlowMat = glowMat;
+  CRT.channelDials = [];
+  CRT.channelHits  = [];
+  // VHF dial = next channel (+1); UHF dial = previous channel (-1).
+  [{ d: PANEL.vhfDial, dir: 1 }, { d: PANEL.uhfDial, dir: -1 }].forEach(({ d, dir }) => {
+    const dg = new THREE.Group();
+    dg.position.set(px(d.u), py(d.v), 0);
+    const glow = new THREE.Mesh(glowGeo, glowMat);
+    glow.position.z = pZ + 0.012;   // behind the ring/cap so it haloes out around the rim
+    glow.renderOrder = 4;
+    dg.add(glow);
     const ring = new THREE.Mesh(ringGeo, chromeSecMat);
-    ring.position.set(px(d.u), py(d.v), pZ + 0.02);
-    section.add(ring);
+    ring.position.z = pZ + 0.02;
+    dg.add(ring);
     const cap = new THREE.Mesh(capGeo, dialCapMat);
     cap.rotation.x = Math.PI / 2;
-    cap.position.set(px(d.u), py(d.v), pZ + 0.05);
-    section.add(cap);
+    cap.position.z = pZ + 0.05;
+    dg.add(cap);
     const ptr = new THREE.Mesh(ptrGeo, pointerMat);
-    ptr.position.set(px(d.u), py(d.v) + panelW * 0.06, pZ + 0.09);
-    section.add(ptr);
+    ptr.position.set(0, panelW * 0.06, pZ + 0.09);
+    dg.add(ptr);
+    const hit = new THREE.Mesh(hitGeo, hitMat);
+    hit.position.z = pZ + 0.1;
+    hit.userData.chDir = dir;
+    dg.add(hit);
+    section.add(dg);
+    CRT.channelDials.push({ group: dg, dir, turnTo: 0 });
+    CRT.channelHits.push(hit);
   });
 
   // ── Four small knobs (FINE/VOL, CONTRAST, COLOR TONE, COLOR) ──
@@ -866,6 +917,7 @@ function _buildCrtAssets() {
   CRT.badgeTex  = makeCrtBadgeTex();  _initTex(CRT.badgeTex);
   CRT.panelTex  = makeCrtPanelTex();  CRT.panelTex.anisotropy = MAX_ANISO; _initTex(CRT.panelTex);
   CRT.haloTex   = makeCrtHaloTex();   _initTex(CRT.haloTex);
+  CRT.dialGlowTex = makeCrtDialGlowTex(); _initTex(CRT.dialGlowTex);
   CRT._model = _buildCrtTv();
   CRT._built = true;
 }
@@ -962,6 +1014,7 @@ function _closeCrt() {
   // The section may still be reparented to the scene (mid-focus dismiss) — re-home it so it
   // travels with the cached model rather than being orphaned / disposed separately.
   if (crtFocusPhase || (CRT.section && CRT.section.parent !== CRT._model)) _resetCrtFocus();
+  _resetCrtDials();   // back to channel 1, dials at rest (cabinet model is cached across opens)
   if (crtGroup) {
     if (crtGroup.userData.model) crtGroup.remove(crtGroup.userData.model); // keep the cached model
     _disposeCrateObject(crtGroup);
@@ -1028,9 +1081,21 @@ function _restoreCrtFocusDPR() {
 // playback. Focusing is a user gesture (Space/E/tap), so autoplay with sound is allowed.
 const _elCrtYt       = document.getElementById('crt-yt-embed');
 const _elCrtYtIframe = document.getElementById('crt-yt-iframe');
-// Embed URLs (one for now; structured as a list so more clips can be added later). Uses the
-// privacy-friendly -nocookie host like the MPC; autoplay rides the focus user-gesture.
-const CRT_VIDEOS = ['https://www.youtube-nocookie.com/embed/khrkw63aMwc?rel=0&autoplay=1&playsinline=1'];
+// Embed URLs — the "channels". The big VHF/UHF dials step through this list (VHF next, UHF prev).
+// YouTube uses the privacy-friendly -nocookie host like the MPC and autoplays off the channel-change
+// gesture. All load in the one #crt-yt-iframe.
+const _yt = id => `https://www.youtube-nocookie.com/embed/${id}?rel=0&autoplay=1&playsinline=1`;
+const CRT_VIDEOS = [
+  _yt('khrkw63aMwc'),
+  _yt('0qmO8XouJ2U'),
+  _yt('B0pMVv0PdW0'),
+  _yt('2HQXtAWhLbI'),
+  _yt('fXgY54oVWHI'),
+  _yt('jX_Ves0PcAE') + '&list=PLME_H0d0E0DeoKkjrZtzuv3PpmXPQWFTi',                      // + playlist
+  _yt('ilwZYil6lXI'),
+  _yt('wLyVYHYQIb8'),
+  _yt('Y8gudyUHMgw'),
+];
 let _crtVidIdx = 0;
 const _ytCorner = new THREE.Vector3();
 // Section-local centre + half-extents of the VISIBLE glass = the bezel opening (openW × openH),
@@ -1078,8 +1143,55 @@ function _showCrtYt() {
 
 function _hideCrtYt() {
   if (!_elCrtYt) return;
-  _elCrtYt.classList.remove('visible');
+  _elCrtYt.classList.remove('visible', 'switching');
+  clearTimeout(_crtSwitchTimer);
   if (_elCrtYtIframe) _elCrtYtIframe.src = '';   // clearing src halts playback
+}
+
+// ── Channel switching (driven by the VHF/UHF dials) ──
+const _crtRay = new THREE.Raycaster();
+const _crtPtr = new THREE.Vector2();
+let _crtSwitchTimer = null;
+
+// Brief "change the channel" blink — fade the iframe out fast so the live WebGL snow shows
+// through, then fade it back in over the player reload.
+function _flashCrtChannel() {
+  if (!_elCrtYt) return;
+  _elCrtYt.classList.add('switching');
+  clearTimeout(_crtSwitchTimer);
+  _crtSwitchTimer = setTimeout(() => _elCrtYt && _elCrtYt.classList.remove('switching'), 260);
+}
+
+// Step the video list by dir (+1 next / -1 previous), reload the iframe (autoplay rides the tap/
+// click gesture), turn the matching dial, and blink to static.
+function _changeCrtChannel(dir) {
+  if (crtFocusPhase !== 'focused' || CRT_VIDEOS.length < 2) return;
+  const n = CRT_VIDEOS.length;
+  _crtVidIdx = (_crtVidIdx + (dir || 1) + n) % n;
+  if (_elCrtYtIframe) _elCrtYtIframe.src = CRT_VIDEOS[_crtVidIdx];
+  if (CRT.channelDials) {
+    const d = CRT.channelDials.find(c => c.dir === (dir || 1)) || CRT.channelDials[0];
+    if (d) d.turnTo += (dir || 1) * (Math.PI / 3);   // a satisfying click-to-next turn
+  }
+  _flashCrtChannel();
+}
+
+// Hit-test the channel dials at a client (x,y); returns the dial direction or null.
+function _crtDialDirAtClient(clientX, clientY) {
+  if (!CRT.channelHits || crtFocusPhase !== 'focused' || !renderer || !renderer.domElement) return null;
+  const rect = renderer.domElement.getBoundingClientRect();
+  _crtPtr.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  _crtPtr.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  _crtRay.setFromCamera(_crtPtr, camera);
+  const hits = _crtRay.intersectObjects(CRT.channelHits, false);
+  return hits.length ? hits[0].object.userData.chDir : null;
+}
+
+// Snap the dials back to rest and reset the channel (cabinet model is cached across opens, so
+// dial rotation + the current channel must be reset explicitly on close).
+function _resetCrtDials() {
+  if (CRT.channelDials) for (const d of CRT.channelDials) { d.turnTo = 0; d.group.rotation.z = 0; }
+  _crtVidIdx = 0;
 }
 
 // Live home (world) transform of the section had it stayed inside the model — the unit bobs
@@ -1232,12 +1344,19 @@ function _showCrtOpenHint() {
     0);
 }
 
-// Screen + panel focused — how to step back.
+// Screen + panel focused — how to change the channel (when there's more than one video) and how
+// to step back.
 function _showCrtFocusHint() {
+  const sep = `<span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`;
+  const ch = CRT_VIDEOS.length > 1
+    ? (isMobile
+        ? `<span class="feh-label">tap a dial to change channel</span>${sep}`
+        : `<span class="feh-label">click a dial to change channel</span>${sep}`)
+    : '';
   _setCrtHint(isMobile
-    ? `<span class="feh-label">tap to return</span>`
-    : `<span class="feh-key">esc</span><span class="feh-label">back</span>`,
-    4600);
+    ? ch + `<span class="feh-label">tap away to return</span>`
+    : ch + `<span class="feh-key">esc</span><span class="feh-label">back</span>`,
+    CRT_VIDEOS.length > 1 ? 6000 : 4600);
 }
 
 // Mobile: a tap while focused returns to the cabinet (focus-open is driven by ctx.eEdge in
@@ -1254,11 +1373,25 @@ if (isMobile && renderer && renderer.domElement) {
       if (!s || crtFocusPhase !== 'focused') continue;
       const dx = t.clientX - s.x, dy = t.clientY - s.y;
       if (Date.now() - s.t >= 280 || dx * dx + dy * dy >= 225) continue;   // not a tap
-      _startCrtUnfocus();
+      // A tap on a channel dial changes the channel; a tap anywhere else steps back. (Taps on the
+      // video itself land on the iframe and never reach here.)
+      const dir = _crtDialDirAtClient(t.clientX, t.clientY);
+      if (dir !== null) _changeCrtChannel(dir);
+      else _startCrtUnfocus();
     }
   });
   renderer.domElement.addEventListener('touchcancel', e => {
     for (const t of e.changedTouches) delete _crtTapStarts[t.identifier];
+  });
+}
+
+// Desktop: click a channel dial to change the channel while the screen is focused. (Clicks on the
+// video go to the YouTube iframe; clicks elsewhere on the canvas do nothing.)
+if (!isMobile && renderer && renderer.domElement) {
+  renderer.domElement.addEventListener('click', e => {
+    if (crtFocusPhase !== 'focused') return;
+    const dir = _crtDialDirAtClient(e.clientX, e.clientY);
+    if (dir !== null) _changeCrtChannel(dir);
   });
 }
 
@@ -1322,15 +1455,32 @@ registerExhibit({
     // Keep the screen video glued to the TV glass while focused (tracks any drift + resize).
     if (crtFocusPhase === 'focused') _fitCrtYtToScreen();
 
+    // Ease each channel dial toward its target rotation (the click-to-next "turn").
+    if (CRT.channelDials) {
+      for (let i = 0; i < CRT.channelDials.length; i++) {
+        const d = CRT.channelDials[i];
+        d.group.rotation.z += (d.turnTo - d.group.rotation.z) * Math.min(1, ctx.dt * 10);
+      }
+    }
+
+    // Focus ramp (0 in cabinet → 1 fully focused), shared by the self-lighting + dial glow below.
+    const _crtLit = crtFocusPhase === 'focused'   ? 1
+                  : crtFocusPhase === 'focusing'   ? crtFocusT
+                  : crtFocusPhase === 'unfocusing' ? 1 - crtFocusT
+                  : 0;
+
     // Self-light the section in focus — ramp emissive on its metals with the lift so the
     // dials/knobs/bezel read once lifted away from the overhead spot (the screen + faceplate
     // are emissive/unlit and read regardless).
     if (CRT._secLitMats) {
-      const lit = crtFocusPhase === 'focused'   ? 1
-                : crtFocusPhase === 'focusing'   ? crtFocusT
-                : crtFocusPhase === 'unfocusing' ? 1 - crtFocusT
-                : 0;
-      for (let i = 0; i < CRT._secLitMats.length; i++) CRT._secLitMats[i].emissiveIntensity = lit;
+      for (let i = 0; i < CRT._secLitMats.length; i++) CRT._secLitMats[i].emissiveIntensity = _crtLit;
+    }
+
+    // Dial navigation glow — pulses around the VHF/UHF dials once focused, fading in/out with the
+    // lift, so the visitor sees the dials are the channel control. Off when there's only one video.
+    if (CRT.dialGlowMat) {
+      const pulse = 0.5 + (Math.sin(ctx.t * 3.0) * 0.5 + 0.5) * 0.5;   // 0.5 → 1.0
+      CRT.dialGlowMat.opacity = CRT_VIDEOS.length > 1 ? _crtLit * pulse : 0;
     }
 
     // Hide the HUD while the section is held in focus (matches the crate / MPC).
