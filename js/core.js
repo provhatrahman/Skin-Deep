@@ -1,3 +1,6 @@
+// Boot timestamp (≈ page parse) — start() holds the splash to a minimum on-screen time from here.
+const _bootT0 = performance.now();
+
 // ══════════════════════════════════════════
 //  PROCEDURAL TEXTURES
 // ══════════════════════════════════════════
@@ -1698,18 +1701,41 @@ export { core, registerExhibit };
 
 // Called by js/main.js after every exhibition module has registered itself.
 export function start() {
-  // No loading veil/spinner. The scene's first frame IS the near-black room (every floater is
-  // invisible until the first interaction — emissive/aura/ring scale by revealT, which is 0 until
-  // roomRevealed), so there is nothing to "pop" and — crucially — nothing animating that the
-  // one-time shader compile could visibly stutter. The old veil made that compile stall visible
-  // by spinning a loader on top of it; the single-file main build has no veil and enters smoothly,
-  // so we match it. Two rAFs let the black page paint first, then we compile every material once
-  // (cheap now that the scene is down to a handful of lights) so the first painted frame and the
-  // later room reveal are both hitch-free, and start the loop.
+  // A ~1s splash (loading bar) veils the cold-start entirely: the one-time shader compile, the
+  // first GPU-warmed frames, and the camera's settle. Behind it the loop runs normally; when the
+  // splash fades we snap the camera to a clean wide pose so the follow-cam glide plays a smooth
+  // "settle onto the orb" intro AFTER the splash — rather than leaking the jittery swoop the
+  // camera does from its default (0,0,0) origin during those first uneven-dt frames.
+  const _elSplash = document.getElementById('splash');
+  let _revealed = false;
+  const _reveal = () => {
+    if (_revealed) return;
+    _revealed = true;
+    // Reset to a wide pose along the current view axis (works for the tutorial spawn and the
+    // ?goto debug spawn alike). _syncCamera then lerps from here onto the orb — the intro glide.
+    const camX = player.position.x - Math.sin(yaw) * 7.5;
+    const camZ = player.position.z - Math.cos(yaw) * 7.5;
+    camera.position.set(camX, 6.0, camZ);
+    if (_elSplash) {
+      _elSplash.classList.add('hidden');
+      setTimeout(() => _elSplash.remove(), 500); // after the 0.45s opacity fade
+    }
+  };
+  // Two rAFs let the black page + splash paint, then compile every material once (cheap now that
+  // the scene is down to a handful of lights) so the first painted frame and the later room reveal
+  // are both hitch-free, and start the loop.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     try { renderer.compile(scene, camera); } catch (e) {}
     animate();
+    // Reveal once the splash has been up ~1s (its bar fills over ~1.05s) and frames are painting.
+    const _tick = () => {
+      if (performance.now() - _bootT0 >= 1050) _reveal();
+      else requestAnimationFrame(_tick);
+    };
+    requestAnimationFrame(_tick);
   }));
+  // Safety: never let the splash stick even if the warm-up stalls.
+  setTimeout(_reveal, 4000);
 }
 
 function animate() {

@@ -562,9 +562,63 @@
     text-transform: uppercase; color: rgba(255,200,100,0.35);
   }
 
+  /* ── SPLASH / LOADING ── painted on first parse (no JS); core.js adds .hidden after ~1s.
+     Deliberately minimal and compositor-friendly: a STATIC orb glow (no animation that could
+     stutter while the GPU warms up) and a loading bar that fills via transform: scaleX (runs on
+     the compositor thread independent of the main-thread compile work behind it). */
+  #splash {
+    position: fixed; inset: 0; z-index: 9999;
+    background: #000;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 26px;
+    opacity: 1; transition: opacity 0.45s ease;
+    will-change: opacity;
+  }
+  #splash.hidden { opacity: 0; pointer-events: none; }
+  #splash .splash-orb {
+    width: 96px; height: 96px; border-radius: 50%;
+    /* slight negative margin so the title sits inside the orb's glow */
+    margin-bottom: -18px;
+    background: radial-gradient(circle at 50% 50%,
+      rgba(255,210,130,0.5) 0%, rgba(255,170,60,0.2) 44%, rgba(255,150,40,0) 72%);
+  }
+  #splash .splash-title {
+    font-family: Georgia, serif; font-weight: 400;
+    font-size: 32px; letter-spacing: 0.42em;
+    /* trailing letter-spacing shifts text left; pad the same amount to optically re-centre */
+    padding-left: 0.42em;
+    text-transform: uppercase;
+    color: rgba(255,228,165,0.96);
+    text-shadow: 0 0 26px rgba(255,180,60,0.5), 0 2px 14px rgba(0,0,0,0.6);
+  }
+  #splash .splash-bar {
+    width: 184px; height: 2px; border-radius: 2px;
+    background: rgba(255,200,100,0.14); overflow: hidden;
+  }
+  #splash .splash-bar-fill {
+    height: 100%; width: 100%; border-radius: 2px;
+    background: linear-gradient(90deg, rgba(255,170,60,0.7), rgba(255,228,150,0.95));
+    box-shadow: 0 0 10px rgba(255,180,60,0.45);
+    transform: scaleX(0); transform-origin: left center;
+    animation: splash-fill 1.05s ease-in-out forwards;
+    will-change: transform;
+  }
+  @keyframes splash-fill { 0% { transform: scaleX(0); } 100% { transform: scaleX(1); } }
+  @media (prefers-reduced-motion: reduce) {
+    #splash .splash-bar-fill { animation: none; transform: scaleX(1); }
+  }
+
 </style>
 </head>
 <body>
+<!-- Splash: veils the cold-start (shader compile + first frames + camera settle) for ~1s, then
+     core.js fades it out. Purely CSS-driven: a static orb glow + a loading bar that fills via a
+     compositor-only transform, so it stays smooth even while the GPU is warming up behind it. -->
+<div id="splash">
+  <div class="splash-orb"></div>
+  <div class="splash-title">YAQEEN</div>
+  <div class="splash-bar"><div class="splash-bar-fill"></div></div>
+</div>
 <div id="ui">
   <div style="display:flex;flex-direction:column;gap:6px;align-items:center">
     <div style="display:flex;justify-content:center"><div class="key" id="key-w">W</div></div>
