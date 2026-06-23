@@ -25,12 +25,12 @@ The experience is intended to be **embedded as an `<iframe>`** on the Skin Deep 
 ## Repository structure
 
 ```
-digital_exhibition_faith.html   — The entire application (self-contained)
-orb_tex.png        — Player orb texture
-tile.png           — Floor and wall tile texture
+public/index.html   — The entire application (self-contained)
+public/orb_tex.png   — Player orb texture
+public/tile.png      — Floor and wall tile texture
 ```
 
-All game logic, UI, and shaders live inside `digital_exhibition_faith.html`. There is no build process, bundler, or package manager.
+All game logic, UI, and shaders live inside `public/index.html`. There is no build process, bundler, or package manager. The `public/` directory is the web root served by Cloudflare Pages.
 
 ---
 
@@ -38,9 +38,9 @@ All game logic, UI, and shaders live inside `digital_exhibition_faith.html`. The
 
 1. Open a terminal in this folder and run:
    ```
-   python -m http.server 8080
+   python -m http.server 8080 --directory public
    ```
-2. Open `http://localhost:8080/digital_exhibition_faith.html` in a browser.
+2. Open `http://localhost:8080/` in a browser.
 3. Press `Ctrl+C` to stop.
 
 > The page must be served over HTTP (not opened as a `file://` URL) because textures are loaded as separate files.

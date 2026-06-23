@@ -12,6 +12,9 @@ desktop.ini
 __pycache__/
 *.py[cod]
 
+# Wrangler local state
+.wrangler/
+
 # Dev artefacts (these live on the dev branch, not main)
 _img_dataurl.txt
 _img2_dataurl.txt
