@@ -51,9 +51,9 @@ const CRT = {
   spotTarget: null,
 };
 
-const CRT_SIZE = 3.6;  // overall TV width; every part is a fraction of this
-const CRT_Y    = 1.45; // group-center height — screen sits near eye level
-const SPOT_INT = 32;   // peak intensity of the overhead key light on the TV (decay 1, ~5u away)
+const CRT_SIZE = 4.6;  // overall TV width; every part is a fraction of this
+const CRT_Y    = 1.7;  // group-center height — screen sits near eye level (raised with the bigger cabinet so the feet clear the floor)
+const SPOT_INT = 42;   // peak intensity of the overhead key light on the TV (decay 1, ~6.5u away — scaled up with the larger cabinet)
 const _crtFwd  = new THREE.Vector3();
 
 let crtPhase = null;   // 'opening' | 'open' | 'closing' | null
@@ -527,17 +527,19 @@ function _buildCrtTv() {
   bezel.position.set(sx, sy, fz - 0.03);
   g.add(bezel);
 
-  // Convex glass — a near-flat spherical cap, set back into the well (below the bezel rim).
-  // capTheta is kept SMALL: at 0.22 the cap bulged ~0.14u (≈7% of the screen width) and read
-  // as a glowing green dome poking out of the set; 0.10 gives a subtle ~1.5% CRT curve.
-  const capR = S * 1.6, capTheta = 0.10;
-  const screenGeo = new THREE.SphereGeometry(capR, 40, 26, 0, Math.PI * 2, 0, capTheta);
-  screenGeo.rotateX(Math.PI / 2);
-  screenGeo.translate(0, 0, -capR);
-  const rim = capR * Math.sin(capTheta);
+  // Glass — a RECTANGULAR plane that fills the whole screen window (a circular sphere-cap
+  // read as an oval and left the corners empty). A gentle parabolic forward bulge gives the
+  // subtle CRT curve without the dome; the bezel's rounded inner edge rounds off the corners.
+  const scrW = openW * 1.02, scrH = openH * 1.02;   // slightly oversized so it tucks under the bezel rim (no dark margin)
+  const screenGeo = new THREE.PlaneGeometry(scrW, scrH, 24, 18);
+  const _sp = screenGeo.attributes.position, _hw = scrW / 2, _hh = scrH / 2, _bulge = 0.05;
+  for (let i = 0; i < _sp.count; i++) {
+    const nx = _sp.getX(i) / _hw, ny = _sp.getY(i) / _hh;   // -1..1 across the screen
+    _sp.setZ(i, _bulge * Math.max(0, 1 - (nx * nx + ny * ny) * 0.5));  // peak at centre, flat at edges
+  }
+  screenGeo.computeVertexNormals();
   const screen = new THREE.Mesh(screenGeo, screenMat);
-  screen.scale.set((openW * 0.94 / 2) / rim, (openH * 0.94 / 2) / rim, 1);
-  screen.position.set(sx, sy, fz - 0.03);
+  screen.position.set(sx, sy, fz - 0.06);   // edges sit back in the well; centre bulges to ~fz-0.01
   g.add(screen);
 
   const glare = new THREE.Mesh(new THREE.PlaneGeometry(openW * 0.86, openH * 0.86), glareMat);
@@ -770,10 +772,12 @@ function _openCrt(px, pz, openYaw) {
   // hot orb specular that was blowing the front out. Scene-level so it doesn't scale with
   // the open animation; intensity ramps with crtT in update().
   const tx = crtGroup.position.x, tz = crtGroup.position.z;
-  const spot = new THREE.SpotLight(0xfff1d6, 0, 18, 0.7, 0.55, 1.0);
-  spot.position.set(tx - _crtFwd.x * 1.6, CRT_Y + 4.8, tz - _crtFwd.z * 1.6);
+  // Offsets scale with the cabinet (≈1.28× the old 3.6 set) so the spot keeps the same rake
+  // across the taller/wider face; range + cone widen to match the larger footprint.
+  const spot = new THREE.SpotLight(0xfff1d6, 0, 22, 0.78, 0.55, 1.0);
+  spot.position.set(tx - _crtFwd.x * 2.0, CRT_Y + 6.1, tz - _crtFwd.z * 2.0);
   const tgt = new THREE.Object3D();
-  tgt.position.set(tx, CRT_Y - 0.2, tz);
+  tgt.position.set(tx, CRT_Y - 0.3, tz);
   scene.add(tgt);
   spot.target = tgt;
   scene.add(spot);
