@@ -297,8 +297,11 @@
      reliably detect a blocked embed, so instead of guessing we always show this while the clip
      is focused — keyed purely on #crt-yt-embed.visible (the class the CRT already toggles), so
      no JS module is involved and it ships in the always-fresh index.html. Dismissible via the ×
-     (inline handler — there's no CSP). Hidden on touch, where extensions aren't the issue. */
-  #crt-adblock-note {
+     (inline handler — there's no CSP). Hidden on touch, where extensions aren't the issue.
+     NOTE: keep this id/class FREE of "ad"/"adblock"/"banner"/"sponsor" — ad-blockers ship generic
+     cosmetic rules (e.g. [id*="adblock"]) that hide such elements, and that literally hid this
+     very warning when it was named #crt-adblock-note (it only appeared with the blocker OFF). */
+  #crt-pb-note {
     position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
     z-index: 26; opacity: 0; pointer-events: none;
     transition: opacity 0.4s ease;
@@ -311,16 +314,16 @@
     box-shadow: 0 8px 28px rgba(0,0,0,0.65);
     -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   }
-  #crt-adblock-note b { color: rgba(255,216,140,1); font-weight: normal; }
-  #crt-yt-embed.visible ~ #crt-adblock-note { opacity: 1; }
-  #crt-adblock-note .cab-x {
+  #crt-pb-note b { color: rgba(255,216,140,1); font-weight: normal; }
+  #crt-yt-embed.visible ~ #crt-pb-note { opacity: 1; }
+  #crt-pb-note .cpn-x {
     flex: none; width: 22px; height: 22px; border-radius: 50%; pointer-events: auto;
     border: 1px solid rgba(255,200,100,0.3); background: rgba(0,0,0,0.4);
     color: rgba(255,220,150,0.9); font: 400 16px/1 Georgia, serif; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
   }
-  #crt-adblock-note .cab-x:hover { background: rgba(255,180,60,0.18); color: rgba(255,235,190,1); }
-  @media (pointer: coarse) { #crt-adblock-note { display: none !important; } }
+  #crt-pb-note .cpn-x:hover { background: rgba(255,180,60,0.18); color: rgba(255,235,190,1); }
+  @media (pointer: coarse) { #crt-pb-note { display: none !important; } }
 
   /* Crate prev/next reuse the exhibit carousel nav style (side, vertically centred).
      Desktop cycles records with the up/down arrow keys, so the side buttons are mobile-only. */
@@ -797,9 +800,9 @@
 </div>
 <!-- Persistent desktop heads-up while the CRT video is focused (CSS-shown via #crt-yt-embed.visible,
      so no JS module needed). Dismissible via the × (inline handler; no CSP on this site). -->
-<div id="crt-adblock-note">
+<div id="crt-pb-note">
   <span><b>No video?</b> A browser ad-blocker or privacy extension is likely blocking it &mdash; disable it for this page (or allow youtube&#8209;nocookie.com), then reload.</span>
-  <button type="button" class="cab-x" aria-label="dismiss" onclick="this.parentNode.style.display='none'">&times;</button>
+  <button type="button" class="cpn-x" aria-label="dismiss" onclick="this.parentNode.style.display='none'">&times;</button>
 </div>
 <button id="crate-prev-btn" class="exhibit-nav-btn" aria-label="previous record">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 18l-6-6 6-6"/></svg>
