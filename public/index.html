@@ -268,30 +268,30 @@
   /* YouTube embed that fills the focused CRT screen window. JS sets left/top/width/height
      per-frame to track the screen mesh's projected rectangle, so the clip plays "inside" the
      TV glass. z-index sits below the focus-escape-hint (25) so the "esc back" hint stays visible. */
+  /* TWO-LEVEL structure mirroring the MPC embed (which paints reliably in the nested
+     production iframe). The OUTER element is JS-positioned over the glass and is its own GPU
+     compositing layer (transform); the INNER #crt-yt-frame does the rounded-corner clip. A
+     position:fixed element that clips a CROSS-ORIGIN iframe with overflow:hidden+border-radius
+     ON ITSELF renders the iframe blank in the nested context (you see the WebGL static behind),
+     and that also hid the blocked-explainer child — so the clip must live on an inner element
+     inside the composited outer, exactly like #mpc-yt-embed → #mpc-yt-frame. */
   #crt-yt-embed {
     position: fixed; top: 0; left: 0; width: 0; height: 0; z-index: 24;
-    overflow: hidden; background: #000; border-radius: 10px;  /* echo the CRT glass corners */
     opacity: 0; pointer-events: none;
     transition: opacity 0.4s ease;
-    /* Promote to a GPU compositing layer. WITHOUT this, a position:fixed element that clips a
-       CROSS-ORIGIN iframe via overflow:hidden + border-radius renders the iframe BLANK on
-       WebKit / iOS Safari (you see straight through to the WebGL static behind it) while the
-       audio keeps playing. It only bites once the whole app is nested inside skindeepmag's
-       outer <iframe> — top-level (localhost) is fine. The MPC embed dodges this for free via
-       its translate()/scale() transform; the CRT overlay has no transform of its own, so we
-       force the layer here (translateZ on both the clip box and the iframe = belt + braces). */
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
-    -webkit-backface-visibility: hidden;
-    will-change: transform;
+    transform: translateZ(0); -webkit-transform: translateZ(0);
+    -webkit-backface-visibility: hidden; will-change: transform;
   }
   #crt-yt-embed.visible { opacity: 1; pointer-events: auto; }
   /* Channel-change blink: fade out fast (showing the live WebGL snow behind), then .visible
      fades it back in. Declared after .visible so it wins on equal specificity. */
   #crt-yt-embed.switching { opacity: 0; transition: opacity 0.06s linear; }
-  #crt-yt-embed iframe {
-    width: 100%; height: 100%; border: 0; display: block;
-    transform: translateZ(0); -webkit-transform: translateZ(0);
+  #crt-yt-frame {
+    position: absolute; inset: 0; overflow: hidden; border-radius: 10px;  /* echo the glass corners */
+    background: #000;
+  }
+  #crt-yt-frame iframe {
+    position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block;
   }
   /* "No signal" explainer shown over the glass when the YouTube request is blocked by an
      ad-blocker / privacy extension / tracking prevention (the request fails, so the frame never
@@ -800,22 +800,25 @@
     <div id="mpc-yt-spin"></div>
   </div>
 </div>
-<!-- YouTube embed that plays inside the focused CRT screen window (JS sizes it to fit). -->
+<!-- YouTube embed that plays inside the focused CRT screen window (JS sizes the outer to fit;
+     inner #crt-yt-frame does the rounded clip — same two-level structure as #mpc-yt-embed). -->
 <div id="crt-yt-embed">
-  <iframe id="crt-yt-iframe" scrolling="no" frameborder="no" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
-  <!-- Shown over the glass when an ad-blocker / privacy extension blocks the YouTube request
-       (the frame never loads). Tells the visitor what's blocking it and how to allow it. -->
-  <div id="crt-yt-blocked" aria-hidden="true">
-    <div class="cyb-inner">
-      <svg class="cyb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/></svg>
-      <div class="cyb-title">Video blocked</div>
-      <p class="cyb-msg">An <b>ad-blocker</b> or your browser's <b>privacy / tracking protection</b> is stopping this YouTube clip from loading.</p>
-      <div class="cyb-how">To watch it</div>
-      <ol class="cyb-steps">
-        <li>Pause your ad-blocker or privacy extension for this page <span class="cyb-dim">(or allow <b>youtube-nocookie.com</b>). On Edge, click the shield in the address bar &rarr; turn off tracking prevention for this site.</span></li>
-        <li>Refresh the page</li>
-      </ol>
-      <p class="cyb-foot">Everything else in the exhibit works without it.</p>
+  <div id="crt-yt-frame">
+    <iframe id="crt-yt-iframe" scrolling="no" frameborder="no" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+    <!-- Shown over the glass when an ad-blocker / privacy extension blocks the YouTube request
+         (the frame never loads). Tells the visitor what's blocking it and how to allow it. -->
+    <div id="crt-yt-blocked" aria-hidden="true">
+      <div class="cyb-inner">
+        <svg class="cyb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/></svg>
+        <div class="cyb-title">Video blocked</div>
+        <p class="cyb-msg">An <b>ad-blocker</b> or your browser's <b>privacy / tracking protection</b> is stopping this YouTube clip from loading.</p>
+        <div class="cyb-how">To watch it</div>
+        <ol class="cyb-steps">
+          <li>Pause your ad-blocker or privacy extension for this page <span class="cyb-dim">(or allow <b>youtube-nocookie.com</b>). On Edge, click the shield in the address bar &rarr; turn off tracking prevention for this site.</span></li>
+          <li>Refresh the page</li>
+        </ol>
+        <p class="cyb-foot">Everything else in the exhibit works without it.</p>
+      </div>
     </div>
   </div>
 </div>
