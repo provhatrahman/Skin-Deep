@@ -1,24 +1,22 @@
-# Cloudflare Pages headers. This buildless app has STABLE filenames (no content
-# hashes), so a long browser TTL means a new deploy is shadowed by the cached old
-# modules until the TTL expires. The JS was defaulting to max-age=14400 (4h), so
-# returning visitors kept stale code for hours after a deploy — and because the
-# experience is embedded in a cross-origin <iframe>, even a parent hard-refresh
-# doesn't bust the iframe's cached subresources.
+# Cloudflare Pages headers. Buildless app with STABLE filenames (no content hashes), so a
+# long browser TTL shadows new deploys with the cached old modules until it expires — worse
+# here because the experience is embedded in a cross-origin <iframe>, so even a parent
+# hard-refresh doesn't bust the iframe's cached subresources.
 #
-# Force the HTML + JS modules to always revalidate. With ETags this is a tiny 304
-# when nothing changed, and an immediate 200 with the new file right after a deploy.
-# (index.html already shipped as max-age=0, must-revalidate; this extends that to
-# every .html and the whole js/ module graph.)
+# NOTE: Pages `_headers` matches a LEADING `/*` splat (optionally with a suffix, e.g. `/*.js`),
+# but a trailing `/dir/*` splat did NOT match here — `/js/*` left the whole module graph on the
+# platform default (max-age=14400, the stale-deploy bug). So target by extension instead.
 
+# JS + HTML: always revalidate (a tiny 304 via ETag when unchanged; new code picked up on the
+# next load right after a deploy instead of being shadowed for hours).
+/*.js
+  Cache-Control: public, max-age=0, must-revalidate
 /*.html
   Cache-Control: public, max-age=0, must-revalidate
 
-/js/*
-  Cache-Control: public, max-age=0, must-revalidate
-
-# Large, rarely-changing assets can stay cached for a day. They have no hashed
-# names either, so keep this short enough that an occasional swap propagates the
-# same day; bump/purge in the Cloudflare dashboard if you need it sooner.
+# Large, rarely-changing media — cache a day. three.min.js is vendored (r128) and never changes,
+# so keep it cached (declared last so it wins over /*.js) to avoid revalidating 600 KB on every
+# startup; purge in the Cloudflare dashboard on the rare swap.
 /*.webp
   Cache-Control: public, max-age=86400
 /three.min.js
