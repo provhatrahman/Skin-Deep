@@ -1208,6 +1208,36 @@ function _crtPreconnect() {
     });
 }
 
+// ── Blocked-embed detection + explainer ──
+// Ad-blockers and browser tracking/privacy protection block the request to youtube-nocookie.com,
+// so the glass just stays black with no clip and no error we can read (the frame is cross-origin).
+// Treat "no load event within a few seconds of setting src" as blocked and reveal the in-screen
+// explainer (#crt-yt-blocked) that says WHAT is blocking it and HOW to allow it. A real load —
+// even a late one on a slow connection — clears it, so a merely-slow video never gets a false notice.
+let _ytLoaded = false;
+let _crtYtBlockTimer = null;
+const CRT_YT_BLOCK_TIMEOUT = 4200;   // ms after src set with no load → assume blocked
+function _hideCrtBlocked() { if (_elCrtYt) _elCrtYt.classList.remove('blocked'); }
+if (_elCrtYtIframe) {
+  _elCrtYtIframe.addEventListener('load', () => {
+    // Fires on a real player load (and on the about:blank navigation when we clear src to stop
+    // playback — harmless, we're hidden by then). Either way: not blocked, so drop the explainer.
+    _ytLoaded = true;
+    clearTimeout(_crtYtBlockTimer);
+    _hideCrtBlocked();
+  });
+}
+// (Re)load a channel URL and arm the blocked-check. Shared by focus-show + channel-change.
+function _loadCrtYt(url) {
+  if (!_elCrtYtIframe) return;
+  _hideCrtBlocked();
+  clearTimeout(_crtYtBlockTimer);
+  if (_elCrtYtIframe.src === url) return;   // already showing this exact src — leave its state alone
+  _ytLoaded = false;
+  _elCrtYtIframe.src = url;
+  _crtYtBlockTimer = setTimeout(() => { if (!_ytLoaded && _elCrtYt) _elCrtYt.classList.add('blocked'); }, CRT_YT_BLOCK_TIMEOUT);
+}
+
 function _showCrtYt() {
   if (!_elCrtYt || !_elCrtYtIframe) return;
   const url = CRT_VIDEOS[_crtVidIdx];
@@ -1221,13 +1251,16 @@ function _showCrtYt() {
   // at 0×0. (Top-level localhost tolerates the old order, which is why it only broke on deploy.)
   _elCrtYt.classList.add('visible');
   _fitCrtYtToScreen();
-  if (_elCrtYtIframe.src !== url) _elCrtYtIframe.src = url;   // (re)load on focus, now at full size
+  _loadCrtYt(url);   // (re)load at full size + arm the "is it blocked?" check
 }
 
 function _hideCrtYt() {
   if (!_elCrtYt) return;
   _elCrtYt.classList.remove('visible', 'switching');
   clearTimeout(_crtSwitchTimer);
+  clearTimeout(_crtYtBlockTimer);
+  _hideCrtBlocked();
+  _ytLoaded = false;
   if (_elCrtYtIframe) _elCrtYtIframe.src = '';   // clearing src halts playback
 }
 
@@ -1251,7 +1284,7 @@ function _changeCrtChannel(dir) {
   if (crtFocusPhase !== 'focused' || CRT_VIDEOS.length < 2) return;
   const n = CRT_VIDEOS.length;
   _crtVidIdx = (_crtVidIdx + (dir || 1) + n) % n;
-  if (_elCrtYtIframe) _elCrtYtIframe.src = CRT_VIDEOS[_crtVidIdx];
+  _loadCrtYt(CRT_VIDEOS[_crtVidIdx]);   // re-arms the blocked-check for the new channel
   if (CRT.channelDials) {
     const d = CRT.channelDials.find(c => c.dir === (dir || 1)) || CRT.channelDials[0];
     if (d) d.turnTo += (dir || 1) * (Math.PI / 3);   // a satisfying click-to-next turn
