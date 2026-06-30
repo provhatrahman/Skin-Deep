@@ -461,11 +461,16 @@ function _buildInfoCardPortrait(spec) {
   for (const it of items) { y += it.gap; it.render(y); }
 
   const tex = new THREE.CanvasTexture(cv);
-  // No mipmaps + clamp: the card is viewed near head-on at focus, and this keeps the tall NPOT
-  // canvas at native size (WebGL1 would otherwise upscale it to a power of two — softer + heavier).
-  tex.minFilter = THREE.LinearFilter;
+  // Trilinear mipmaps + anisotropy. In the carousel (pre-focus) the card is displayed only ~275 CSS
+  // px wide, so its 1200px texture is minified ~2x; plain LinearFilter samples just two texels and
+  // smears the small body type into an unreadable blur. Mipmaps give a properly downsampled chain so
+  // the text stays legible at any size/angle, and anisotropy keeps it crisp on the tilted orbit cards.
+  // WebGL2 (every target device) mipmaps this NPOT canvas in place — no power-of-two resize, no
+  // softening; only the legacy WebGL1 fallback would rescale it (still better than the aliased blur).
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.magFilter = THREE.LinearFilter;
-  tex.generateMipmaps = false;
+  tex.generateMipmaps = true;
+  tex.anisotropy = MAX_ANISO;
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.userData = tex.userData || {};                  // fresh textures can have undefined userData here
   tex.userData.aspect = W / H;                        // portrait — _ensureCardTex defers to this
@@ -624,6 +629,12 @@ let curDPR = Math.max(MIN_DPR, MAX_DPR - 0.4);
 // While an exhibit card is open the viewer studies the photos head-on, so we push
 // the framebuffer to full resolution and pause the adaptive downscaler (see animate()).
 const EXHIBIT_DPR = MAX_DPR;
+// At FOCUS (one card pulled up 1:1) the scene is near-static — a single quad over a dimmed,
+// frozen room with DRS paused — so we can afford the device's NATIVE pixel ratio even on mobile,
+// where the roaming cap (MAX_DPR=2) would otherwise minify the ~1200px card texture into a ~740px
+// region and let the browser upscale it back (jagged text + blur). Capped at 3 so a 4x-DPR panel
+// can't allocate a runaway framebuffer. Desktop keeps the cap at 2.
+const EXHIBIT_FOCUS_DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 3 : 2);
 let _savedDPR = curDPR;
 renderer.setPixelRatio(curDPR);
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -1055,6 +1066,59 @@ floaters.forEach((f, i) => {
   }
 });
 
+// On load only the central welcome object (floater 0) is visible and interactable — every other
+// exhibition floater starts fully hidden (mesh/aura/ring/shadow/beam off, and _hidden excludes it
+// from trigger targeting + the light pool). Interacting with floater 0 reveals the rest of the
+// room (see _revealFloaters). Floater 0 itself is never hidden — it's spotlit by the central beam.
+for (let i = 1; i < floaters.length; i++) _setFloaterVisible(floaters[i], false);
+
+// ══════════════════════════════════════════
+//  WAYPOINT ARROW (tutorial guidance)
+// ══════════════════════════════════════════
+// A glowing compass arrow that hovers above the orb during the "move towards the centre object"
+// step (tutorial stage 3) and rotates to point at the central welcome object — a video-game-style
+// waypoint so the visitor knows which way to head. Amber emissive + additive aura + gentle bob and
+// pulse keep it in the room's palette (it borrows floater 0's exact colours). Built once here;
+// faded in/out and disposed from the loop once the visitor arrives (see the _wayArrow block below).
+const _wayShape = new THREE.Shape();
+_wayShape.moveTo(0, 0.30);       // tip
+_wayShape.lineTo(0.26, 0.02);    // right barb
+_wayShape.lineTo(0.11, 0.02);    // right shoulder
+_wayShape.lineTo(0.11, -0.28);   // right tail
+_wayShape.lineTo(-0.11, -0.28);  // left tail
+_wayShape.lineTo(-0.11, 0.02);   // left shoulder
+_wayShape.lineTo(-0.26, 0.02);   // left barb
+_wayShape.closePath();           // back to tip
+const _wayGeo = new THREE.ExtrudeGeometry(_wayShape, { depth: 0.07, bevelEnabled: false });
+_wayGeo.center();
+const _wayTilt = Math.PI / 2 - 0.18;   // lie nearly flat, pointing group-forward (+Z), tip only slightly raised
+const _wayArrowMat = new THREE.MeshStandardMaterial({
+  color: 0xffcc44, emissive: 0xff8800, emissiveIntensity: 1.5,
+  roughness: 0.2, metalness: 0.5, transparent: true, opacity: 0
+});
+let _wayArrow = new THREE.Mesh(_wayGeo, _wayArrowMat);
+_wayArrow.rotation.x = _wayTilt;
+const _wayAuraMat = new THREE.MeshBasicMaterial({   // additive glow shell, like the floaters' auras
+  color: 0xffcc44, transparent: true, opacity: 0,
+  side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false
+});
+const _wayAura = new THREE.Mesh(_wayGeo, _wayAuraMat);
+_wayAura.rotation.x = _wayTilt;
+_wayAura.scale.setScalar(1.3);
+const _wayArrowGroup = new THREE.Group();   // outer transform: position above orb + Y-bearing to target
+_wayArrowGroup.add(_wayArrow, _wayAura);
+_wayArrowGroup.visible = false;
+scene.add(_wayArrowGroup);
+let _wayOpacity = 0;
+function _disposeWayArrow() {
+  if (!_wayArrow) return;
+  scene.remove(_wayArrowGroup);
+  _wayGeo.dispose();          // shared by core + aura — dispose once
+  _wayArrowMat.dispose();
+  _wayAuraMat.dispose();
+  _wayArrow = null;
+}
+
 let roomRevealed = false;
 let revealT = 0; // 0 = fully dark, 1 = fully lit
 
@@ -1288,27 +1352,36 @@ function _tutShow(stage) {
   // Force reflow so removing+re-adding 'visible' actually restarts child animations
   void _tutGuideDot.offsetWidth;
   if (stage === 0) {
-    _tutMsg.textContent = isMobile ? 'Swipe the orb right to rotate your view' : 'Press → to rotate your view';
+    _tutMsg.textContent = isMobile ? 'Swipe the orb right to rotate your view' : 'Press the → arrow key on your keyboard to rotate your view';
+    // Desktop: show the ← / → arrow keys as physical keycaps (the one to press pulses, the other is
+    // dimmed) with an "on your keyboard" caption — testers were trying to click the on-screen hint
+    // instead of reaching for the keyboard, so make it unmistakably a key press, like the WASD step.
     _tutHint.innerHTML = isMobile
       ? `<div style="display:flex;align-items:center;gap:10px;color:rgba(255,200,100,0.8)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="22" height="22"><path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.258a1 1 0 01-1.447.894L15 14"/><rect x="3" y="6" width="12" height="12" rx="2"/></svg>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M5 12h14M14 7l5 5-5 5"/></svg>
         </div>`
-      : `<div style="display:flex;align-items:center;gap:8px;color:rgba(255,200,100,0.8)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="22" height="22"><path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.258a1 1 0 01-1.447.894L15 14"/><rect x="3" y="6" width="12" height="12" rx="2"/></svg>
-          <div class="tut-k" style="width:36px;height:36px;font-size:16px;animation:tut-pulse 1.3s ease-in-out infinite">→</div>
+      : `<div style="display:flex;flex-direction:column;align-items:center;gap:9px;color:rgba(255,200,100,0.8)">
+          <div style="display:flex;gap:6px">
+            <div class="tut-k" style="width:34px;height:34px;font-size:15px;opacity:0.35">←</div>
+            <div class="tut-k" style="width:34px;height:34px;font-size:15px;animation:tut-pulse 1.3s ease-in-out infinite">→</div>
+          </div>
+          <div style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,200,100,0.55)">on your keyboard</div>
         </div>`;
     if (isMobile) { _gdotBall.classList.remove('swipe-left'); void _tutGuideDot.offsetWidth; _tutGuideDot.classList.add('visible'); }
   } else if (stage === 1) {
-    _tutMsg.textContent = isMobile ? 'Now swipe left to rotate the other way' : 'Press ← to rotate the other way';
+    _tutMsg.textContent = isMobile ? 'Now swipe left to rotate the other way' : 'Now press the ← arrow key to rotate the other way';
     _tutHint.innerHTML = isMobile
       ? `<div style="display:flex;align-items:center;gap:10px;color:rgba(255,200,100,0.8)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M19 12H5M10 17l-5-5 5-5"/></svg>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="22" height="22"><path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.258a1 1 0 01-1.447.894L15 14"/><rect x="3" y="6" width="12" height="12" rx="2"/></svg>
         </div>`
-      : `<div style="display:flex;align-items:center;gap:8px;color:rgba(255,200,100,0.8)">
-          <div class="tut-k" style="width:36px;height:36px;font-size:16px;animation:tut-pulse 1.3s ease-in-out infinite">←</div>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="22" height="22"><path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.258a1 1 0 01-1.447.894L15 14"/><rect x="3" y="6" width="12" height="12" rx="2"/></svg>
+      : `<div style="display:flex;flex-direction:column;align-items:center;gap:9px;color:rgba(255,200,100,0.8)">
+          <div style="display:flex;gap:6px">
+            <div class="tut-k" style="width:34px;height:34px;font-size:15px;animation:tut-pulse 1.3s ease-in-out infinite">←</div>
+            <div class="tut-k" style="width:34px;height:34px;font-size:15px;opacity:0.35">→</div>
+          </div>
+          <div style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,200,100,0.55)">on your keyboard</div>
         </div>`;
     if (isMobile) { _gdotBall.classList.add('swipe-left'); void _tutGuideDot.offsetWidth; _tutGuideDot.classList.add('visible'); }
   } else if (stage === 2) {
@@ -1419,6 +1492,7 @@ if (_PARAMS.get('goto') === 'crate') {
   tutStage = 5;
   _tutGuideDot.classList.remove('visible');
   roomRevealed = true;
+  _revealFloaters();            // direct link skips the welcome interaction, so reveal the room now
   const _cf = floaterData[3];   // the vinyl crate's floater (see js/exhibits/vinyl-crate.js)
   player.position.set(_cf.pos[0], 0, _cf.pos[2] + 3);
   yaw = Math.PI;
@@ -1461,16 +1535,18 @@ function showWelcomeCard() {
   const _divider = `<canvas id="welcome-floaters-canvas"></canvas>`;
   _welcomeBody.innerHTML = isMobile
     ? `<p>You're inside the Yaqeen digital exhibition: a quiet, explorable gallery.</p>
+       <p><b>Swipe</b> across the screen to pan the camera and look around.</p>
        <p>Drift up to any glowing object or spotlight and <b>tap</b> it to open its exhibit.</p>
        ${_divider}
        <p>Inside, <b>swipe</b> to move between pieces and play any media.</p>
        <p><b>Tap away</b> or drift off to step back into the room.</p>`
     : `<p>You're inside the Yaqeen digital exhibition: a quiet, explorable gallery.</p>
-       <p>Drift up to any glowing object or spotlight and press <b>Space</b> to open its exhibit.</p>
+       <p>Press the <b>← →</b> arrow keys to pan the camera and look around.</p>
+       <p>Drift up to any glowing object or spotlight, then <b>click</b> it or press <b>Space</b> to open its exhibit.</p>
        ${_divider}
        <p>Inside, <b>read the on screen instructions</b> for how to view pieces and play any media.</p>
        <p>Press <b>Esc</b> or simply drift away to step back into the room.</p>`;
-  _welcomeDismiss.textContent = isMobile ? 'Tap to begin' : 'Press Space to begin';
+  _welcomeDismiss.textContent = isMobile ? 'Tap to begin' : 'Click or press Space to begin';
   _welcomeOverlay.classList.remove('hidden');
   _welcomeOpen = true;
   // Build the mini-floater divider once the card has laid out (so the canvas has a width).
@@ -1747,6 +1823,7 @@ function _showExhibitPanGuide() {
 }
 
 function _showExhibitHint() {
+  _showExhibitGuide();   // fuller dismissable guidance alongside the button pill
   _elFocusEscapeHint.innerHTML = isMobile
     ? `<span class="feh-label">tap to focus</span>`
     : `<span class="feh-key">spc</span><span class="feh-label">focus</span><span class="feh-key">esc</span><span class="feh-label">close</span>`;
@@ -1811,9 +1888,10 @@ function _startExhibitFocus(idx) {
   exhibitFocusPhase = 'focusing';
   exhibitFocusSwitchTo = -1;
   exhibitFocusT = 0;
-  // Boost to full resolution now — focus is the only place the photo is studied 1:1.
+  // Boost to native resolution now — focus is the only place the photo/info card is studied 1:1,
+  // and the static focused view affords full DPR even on mobile (see EXHIBIT_FOCUS_DPR).
   // (DRS is paused while an exhibit is open, so this DPR stays put until unfocus/close.)
-  if (curDPR !== EXHIBIT_DPR) { curDPR = EXHIBIT_DPR; _applyDPR(); }
+  if (curDPR !== EXHIBIT_FOCUS_DPR) { curDPR = EXHIBIT_FOCUS_DPR; _applyDPR(); }
   _hideFocusEscapeHint();
   _hideExhibitNav();
   _hideExhibitPanGuide();
@@ -1864,6 +1942,13 @@ function _restoreExhibitFloater() {
     _setFloaterVisible(exhibitTriggerFloater, true);
     exhibitTriggerFloater = null;
   }
+}
+
+// Open the room: reveal the exhibition floaters that started hidden (floaters 1+). Until now only
+// the central welcome object (floater 0) was visible/interactable; they now fade in with the room
+// light (the reveal-driven beam fade in the floater loop drives their cones up from opacity 0).
+function _revealFloaters() {
+  for (let i = 1; i < floaters.length; i++) _setFloaterVisible(floaters[i], true);
 }
 
 function _dismissExhibit() {
@@ -2073,6 +2158,7 @@ function _showFocusEscapeHint() {
 }
 
 function _showExhibitFocusHints() {
+  _hideExhibitGuide();   // focused on one photo now — the orbit guidance no longer applies
   const sep = `<span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`;
   if (isMobile) {
     _elFocusEscapeHint.innerHTML = exhibitPanelN >= 2
@@ -2094,7 +2180,46 @@ function _showExhibitFocusHints() {
 function _hideFocusEscapeHint() {
   clearTimeout(_focusEscapeTimer);
   _elFocusEscapeHint.classList.remove('visible', 'dim');
+  _hideExhibitGuide();   // the guide card is part of the same guidance — tear it down together
 }
+
+// ── Dismissable photo-carousel guidance card ─────────────────────────────────
+// Fuller "what is this / how to use it" copy shown ALONGSIDE the open-state button pill,
+// reminding the visitor they can pan around the orbiting photos and focus one to step
+// through the set like a slideshow. Stays until closed (one-time per session).
+const _elExhibitGuide      = document.getElementById('exhibit-guide');
+const _elExhibitGuideBody  = document.getElementById('exhibit-guide-body');
+const _elExhibitGuideClose = document.getElementById('exhibit-guide-close');
+let _exhibitGuideDismissed = false;
+
+function _showExhibitGuide() {
+  if (!_elExhibitGuide || _exhibitGuideDismissed) return;
+  const multi = exhibitPanelN >= 2;
+  if (_elExhibitGuideBody) {
+    if (isMobile) {
+      _elExhibitGuideBody.innerHTML =
+        `These photos orbit around you. <b>Drag to look around</b> them, then <b>tap a photo</b> to focus it` +
+        (multi ? ` and swipe through the rest like a slideshow.` : `.`) +
+        ` Tap away to close.`;
+    } else {
+      _elExhibitGuideBody.innerHTML =
+        `These photos orbit around you. Turn to look around them, then <b>click a photo</b> (or press <span class="feh-key">spc</span>) to focus it` +
+        (multi ? ` and step through the rest like a slideshow with <span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span>.` : `.`) +
+        ` <span class="feh-key">esc</span> closes.`;
+    }
+  }
+  _elExhibitGuide.classList.add('visible');
+}
+
+function _hideExhibitGuide() {
+  if (_elExhibitGuide) _elExhibitGuide.classList.remove('visible');
+}
+
+// Closing the card dismisses it for the session; the button pill stays put.
+if (_elExhibitGuideClose) _elExhibitGuideClose.addEventListener('click', () => {
+  _exhibitGuideDismissed = true;
+  _hideExhibitGuide();
+});
 
 
 const _exhibitNavFire = (dir, e) => {
@@ -2148,13 +2273,43 @@ function _tryOpenExhibitLink(clientX, clientY) {
   window.open(h.url, '_blank', 'noopener,noreferrer');
   return true;
 }
+// Shared content for the circular FOCUS prompt (photo panels + crate discs). Desktop mirrors the
+// proximity prompt — a click glyph with "click to focus / or press space", so clicking the aimed
+// panel/disc focuses it just like Space (see the click handler). Mobile keeps the tap-target circle.
+// Set once when the prompt becomes visible (callers guard on the visibility transition).
+function _renderFocusPrompt() {
+  if (isMobile) {
+    _elIprLabel.textContent = 'tap to focus';
+    _elIprIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="28" height="28"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="rgba(255,180,60,0.35)"/></svg>`;
+  } else {
+    _elIprLabel.innerHTML = `<span>click to focus</span><span class="ipr-alt">or press <kbd>space</kbd></span>`;
+    _elIprIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,220,140,0.95)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="26" height="26"><path d="M14 4.1 12 6"/><path d="m5.1 8-2.9-.8"/><path d="m6 12-1.9 2"/><path d="M7.2 2.2 8 5.1"/><path d="M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z"/></svg>`;
+  }
+}
+// Desktop helper: is an interact/focus prompt on screen right now? When it is, a click acts as a
+// Space press — opening the nearby object, or focusing the aimed panel/disc. (The prompt is only
+// shown when one of those is valid; the loop / the active exhibition then arbitrates, honouring iCD.)
+function _promptClickArmed() {
+  return _elPrompt.classList.contains('visible');
+}
 if (renderer && renderer.domElement && !isMobile) {
   renderer.domElement.addEventListener('click', e => {
-    if (exhibitFocusPhase === 'focused') _tryOpenExhibitLink(e.clientX, e.clientY);
+    // A focused exhibit card: a click may open a link hotspot — handle it and stop.
+    if (exhibitFocusPhase === 'focused') { _tryOpenExhibitLink(e.clientX, e.clientY); return; }
+    // Dual interaction: while any interact/focus prompt is up, a click behaves like Space. Mirrors
+    // the mobile tap — synthesise a brief KeyE so the generic dispatch (open / revisit / focus the
+    // aimed panel-or-disc) runs and honours the interaction cooldown (iCD).
+    if (_promptClickArmed()) {
+      keys['KeyE'] = true;
+      setTimeout(() => { keys['KeyE'] = false; }, 120);
+    }
   });
-  // Cursor affordance — a pointer over a live handle, default elsewhere.
+  // Cursor affordance — a pointer over a live exhibit-card link, or whenever an interact/focus
+  // prompt is showing (so the click-to-interact / click-to-focus affordance reads).
   renderer.domElement.addEventListener('pointermove', e => {
-    const want = (exhibitFocusPhase === 'focused' && _exhibitHotspotAtClient(e.clientX, e.clientY)) ? 'pointer' : '';
+    let want = '';
+    if (exhibitFocusPhase === 'focused') want = _exhibitHotspotAtClient(e.clientX, e.clientY) ? 'pointer' : '';
+    else if (_promptClickArmed()) want = 'pointer';
     if (renderer.domElement.style.cursor !== want) renderer.domElement.style.cursor = want;
   });
 }
@@ -2293,6 +2448,7 @@ const core = {
   setCD(v) { iCD = v; },
   getCD()  { return iCD; },
   hidePrompt() { _elPrompt.classList.remove('visible'); },
+  renderFocusPrompt: _renderFocusPrompt,
   // shared focus-mode services (carousel + crate disc focus)
   computeFocusTarget: _computeExhibitFocusTarget,
   syncCamera: _syncCamera,
@@ -2464,6 +2620,28 @@ function animate() {
   blobShadow.position.z = player.position.z;
   blobShadow.material.opacity = 0.72 - Math.sin(t*2.7)*0.08;
 
+  // Waypoint arrow — hovers above the orb during tutorial stage 3, pointing at the central welcome
+  // object (floater 0) so the visitor knows where to head. Fades in while that step is active, out
+  // once they arrive (tutStage advances), then frees itself.
+  if (_wayArrow) {
+    const _wayWant = tutStage === 3 ? 1 : 0;
+    _wayOpacity += (_wayWant - _wayOpacity) * Math.min(1, dt * 6);
+    if (_wayOpacity <= 0.002 && tutStage >= 4) {
+      _disposeWayArrow();
+    } else {
+      const _wayVis = _wayOpacity > 0.002;
+      _wayArrowGroup.visible = _wayVis;
+      if (_wayVis) {
+        const _wtx = floaters[0].mesh.position.x, _wtz = floaters[0].mesh.position.z;
+        _wayArrowGroup.position.set(player.position.x, 1.32 + Math.sin(t * 2.2) * 0.06, player.position.z);
+        _wayArrowGroup.rotation.y = Math.atan2(_wtx - player.position.x, _wtz - player.position.z);
+        _wayArrowMat.emissiveIntensity = (1.5 + Math.sin(t * 3.4) * 0.4) * _wayOpacity;
+        _wayArrowMat.opacity = _wayOpacity;
+        _wayAuraMat.opacity = 0.5 * _wayOpacity;
+      }
+    }
+  }
+
   // Dust motes — animated on the GPU (see moteMesh onBeforeCompile). No CPU loop / upload:
   // just advance time and feed the player position as uniforms.
   _moteUniforms.uTime.value   += dt * 0.04;
@@ -2628,14 +2806,17 @@ function animate() {
     }
     if (!_elPrompt.classList.contains('visible')) {
       const _seenHere = _isExhibitSeen(_exhibitByFloaterRef.get(near.ref));
-      _elIprLabel.textContent = _seenHere
-        ? (isMobile ? 'tap to revisit' : 'revisit')
-        : (isMobile ? 'tap' : 'interact');
-      const iconEl = _elIprIcon;
       if (isMobile) {
-        iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="28" height="28"><path d="M12 3v2M12 19v2M3 12H1M23 12h-2M18.36 5.64l-1.41 1.41M7.05 16.95l-1.41 1.41M18.36 18.36l-1.41-1.41M7.05 7.05L5.64 5.64"/><circle cx="12" cy="12" r="4" fill="rgba(255,180,60,0.15)"/></svg>`;
+        _elIprLabel.textContent = _seenHere ? 'tap to revisit' : 'tap';
+        _elIprIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="28" height="28"><path d="M12 3v2M12 19v2M3 12H1M23 12h-2M18.36 5.64l-1.41 1.41M7.05 16.95l-1.41 1.41M18.36 18.36l-1.41-1.41M7.05 7.05L5.64 5.64"/><circle cx="12" cy="12" r="4" fill="rgba(255,180,60,0.15)"/></svg>`;
       } else {
-        iconEl.innerHTML = `<span style="font-family:Georgia,serif;font-size:15px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
+        // Desktop dual interaction: clicking the object (or pressing Space) opens it. Spell both out
+        // — the bare "spc" circle read as a clickable button, so testers clicked it expecting that —
+        // and show a mouse-pointer-click glyph so the click affordance is unmistakable. The hint
+        // lives INSIDE the label so any other prompt's textContent= overwrites it cleanly (no stale).
+        _elIprLabel.innerHTML = `<span>${_seenHere ? 'click to revisit' : 'click to interact'}</span>`
+          + `<span class="ipr-alt">or press <kbd>space</kbd></span>`;
+        _elIprIcon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,220,140,0.95)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="26" height="26"><path d="M14 4.1 12 6"/><path d="m5.1 8-2.9-.8"/><path d="m6 12-1.9 2"/><path d="M7.2 2.2 8 5.1"/><path d="M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z"/></svg>`;
       }
       _elPrompt.classList.add('visible');
     }
@@ -2654,14 +2835,13 @@ function animate() {
       const ry = (-_panelWp.y * 0.5 + 0.5) * window.innerHeight;
       _elPrompt.style.left = rx + 'px';
       _elPrompt.style.top  = (ry - 36) + 'px';
-      _elIprLabel.textContent = isMobile ? 'tap to focus' : 'focus';
-      const iconEl = _elIprIcon;
-      if (isMobile) {
-        iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="28" height="28"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="rgba(255,180,60,0.35)"/></svg>`;
-      } else {
-        iconEl.innerHTML = `<span style="font-family:Georgia,serif;font-size:15px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
+      // Set content once on the show transition (position keeps updating every frame). Desktop now
+      // reads "click to focus / or press space" with a click glyph — clicking the aimed panel focuses
+      // it just like Space (see the click handler), matching the proximity prompt.
+      if (!_elPrompt.classList.contains('visible')) {
+        _renderFocusPrompt();
+        _elPrompt.classList.add('visible');
       }
-      _elPrompt.classList.add('visible');
     } else {
       _elPrompt.classList.remove('visible');
     }
@@ -2720,6 +2900,7 @@ function animate() {
         showWelcomeCard();
         if (!roomRevealed) {
           roomRevealed = true;
+          _revealFloaters();           // bring the rest of the room's pieces into view + reach
           _startExhibitPreloadDrain(); // trickle the gallery in; proximity prioritises the nearest
         }
       } else {
