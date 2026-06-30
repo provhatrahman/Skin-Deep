@@ -265,65 +265,134 @@
   }
   #mpc-yt-close:hover { background: rgba(28,22,16,0.95); }
 
-  /* YouTube embed that fills the focused CRT screen window. JS sets left/top/width/height
-     per-frame to track the screen mesh's projected rectangle, so the clip plays "inside" the
-     TV glass. z-index sits below the focus-escape-hint (25) so the "esc back" hint stays visible. */
-  /* TWO-LEVEL structure mirroring the MPC embed (which paints reliably in the nested
-     production iframe). The OUTER element is JS-positioned over the glass and is its own GPU
-     compositing layer (transform); the INNER #crt-yt-frame does the rounded-corner clip. A
-     position:fixed element that clips a CROSS-ORIGIN iframe with overflow:hidden+border-radius
-     ON ITSELF renders the iframe blank in the nested context (you see the WebGL static behind),
-     and that also hid the blocked-explainer child — so the clip must live on an inner element
-     inside the composited outer, exactly like #mpc-yt-embed → #mpc-yt-frame. */
+  /* CRT "channels" — a CENTERED modal lightbox, the same ad-blocker-safe structure as #mpc-yt-embed.
+     A fixed, JS-repositioned iframe reads as a floating/sticky video player and gets cosmetically
+     filtered (that's what hid the old screen-pinned CRT embed); a centered modal does not. The retro
+     TV look below (bezel, scanlines, vignette, static-blink) is pure CSS dressing over that safe
+     structure — it does NOT touch positioning. Two-level like the MPC: the fixed OUTER element does
+     NOT clip; the inner #crt-yt-frame does the overflow:hidden + radius clip (clipping a cross-origin
+     iframe on the fixed element ITSELF renders it blank in skindeepmag's nested production iframe). */
   #crt-yt-embed {
-    position: fixed; top: 0; left: 0; width: 0; height: 0; z-index: 24;
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(0.92);
+    width: min(94vw, 820px); z-index: 30;
     opacity: 0; pointer-events: none;
-    transition: opacity 0.4s ease;
-    transform: translateZ(0); -webkit-transform: translateZ(0);
-    -webkit-backface-visibility: hidden; will-change: transform;
+    transition: opacity 0.45s ease, transform 0.45s ease;
   }
-  #crt-yt-embed.visible { opacity: 1; pointer-events: auto; }
-  /* Channel-change blink: fade out fast (showing the live WebGL snow behind), then .visible
-     fades it back in. Declared after .visible so it wins on equal specificity. */
-  #crt-yt-embed.switching { opacity: 0; transition: opacity 0.06s linear; }
+  #crt-yt-embed.visible {
+    opacity: 1; pointer-events: auto;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  #crt-yt-embed:focus { outline: none; }  /* focus is pulled here to keep Escape working — no ring */
+  /* The set sits between two channel dials (desktop); the frame flexes, the knobs are fixed. */
+  #crt-yt-stage { display: flex; align-items: center; justify-content: center; gap: 16px; }
+  /* The set: a chunky retro bezel framing the 16:9 glass. aspect-ratio (not padding-top) so it
+     keeps 16:9 as a flex item once the side knobs claim horizontal space. */
   #crt-yt-frame {
-    position: absolute; inset: 0; overflow: hidden; border-radius: 10px;  /* echo the glass corners */
-    background: #000;
+    position: relative; flex: 1 1 auto; min-width: 0; aspect-ratio: 16 / 9;
+    border-radius: 14px; overflow: hidden; background: #000;
+    border: 10px solid #2a2622;
+    box-shadow:
+      0 14px 48px rgba(0,0,0,0.8),
+      0 0 26px rgba(120,220,150,0.16),                 /* faint green CRT glow */
+      inset 0 0 0 2px rgba(255,255,255,0.05),
+      inset 0 0 42px rgba(0,0,0,0.7);                  /* darken toward the bezel */
+  }
+  /* Channel dials flanking the screen — chrome knobs with a pointer notch that turns on each
+     change (in sync with the cabinet's 3D dials). Pure DOM siblings of the iframe, so they have
+     ZERO ad-block bearing. Hidden on coarse pointers (no room) → the bottom ◀/▶ bar takes over. */
+  /* Matches the cabinet's 3D dials: a brushed-chrome RING (#bcc0c6) around a dark glossy charcoal
+     CAP (#121316) with a near-white POINTER (#e4e7ea). The button background is the chrome rim;
+     the inset .crt-knob-face is the cap (and what rotates). */
+  .crt-knob {
+    flex: none; width: 58px; height: 58px; border-radius: 50%; cursor: pointer; padding: 0;
+    border: none; position: relative;
+    background: radial-gradient(circle at 38% 30%, #e3e5e8 0%, #bcc0c6 42%, #9a9ea4 72%, #7e8288 100%);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.6), 0 0 18px rgba(120,220,150,0.16);
+  }
+  .crt-knob:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.6), 0 0 26px rgba(150,240,170,0.45); }
+  .crt-knob:active { transform: scale(0.94); }
+  .crt-knob-face {
+    position: absolute; inset: 6px; border-radius: 50%;
+    background:
+      radial-gradient(circle at 36% 28%, rgba(255,255,255,0.20) 0%, rgba(255,255,255,0.04) 28%, rgba(0,0,0,0) 48%),
+      radial-gradient(circle at 50% 62%, #1c1e22 0%, #121316 56%, #090a0c 100%);
+    box-shadow: inset 0 1px 2px rgba(255,255,255,0.12), inset 0 -2px 5px rgba(0,0,0,0.65);
+    transition: transform 0.3s cubic-bezier(.2,.85,.25,1);
+  }
+  /* white pointer line from near the cap's top edge toward its centre (orbits as the cap turns) */
+  .crt-knob-face::before {
+    content: ""; position: absolute; top: 5px; left: 50%; width: 3px; height: 38%;
+    margin-left: -1.5px; border-radius: 2px;
+    background: #e4e7ea; box-shadow: 0 0 4px rgba(228,231,234,0.55);
   }
   #crt-yt-frame iframe {
-    position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block;
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; display: block;
   }
-  /* Persistent (desktop-only) heads-up shown whenever the CRT video is on screen. We can't
-     reliably detect a blocked embed, so instead of guessing we always show this while the clip
-     is focused — keyed purely on #crt-yt-embed.visible (the class the CRT already toggles), so
-     no JS module is involved and it ships in the always-fresh index.html. Dismissible via the ×
-     (inline handler — there's no CSP). Hidden on touch, where extensions aren't the issue.
-     NOTE: keep this id/class FREE of "ad"/"adblock"/"banner"/"sponsor" — ad-blockers ship generic
-     cosmetic rules (e.g. [id*="adblock"]) that hide such elements, and that literally hid this
-     very warning when it was named #crt-adblock-note (it only appeared with the blocker OFF). */
-  #crt-pb-note {
-    position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
-    z-index: 26; opacity: 0; pointer-events: none;
-    transition: opacity 0.4s ease;
-    display: flex; align-items: center; gap: 10px;
-    max-width: min(92vw, 470px);
-    font-family: Georgia, serif; font-size: 12px; line-height: 1.5; letter-spacing: 0.04em;
-    color: rgba(255,228,180,0.92); text-align: left;
-    background: rgba(5,3,1,0.8); border: 1px solid rgba(255,200,100,0.3);
-    border-radius: 9px; padding: 9px 10px 9px 16px;
-    box-shadow: 0 8px 28px rgba(0,0,0,0.65);
-    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  /* Loading facade: the channel's YouTube thumbnail + spinner paint instantly while the player
+     loads, then crossfade out once it's ready (#crt-yt-frame gets .loaded). Mirrors the MPC. */
+  #crt-yt-poster {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background: #05080a center / cover no-repeat;
+    transition: opacity 0.28s ease;
   }
-  #crt-pb-note b { color: rgba(255,216,140,1); font-weight: normal; }
-  #crt-yt-embed.visible ~ #crt-pb-note { opacity: 1; }
-  #crt-pb-note .cpn-x {
-    flex: none; width: 22px; height: 22px; border-radius: 50%; pointer-events: auto;
-    border: 1px solid rgba(255,200,100,0.3); background: rgba(0,0,0,0.4);
-    color: rgba(255,220,150,0.9); font: 400 16px/1 Georgia, serif; cursor: pointer;
+  #crt-yt-spin {
+    position: absolute; top: 50%; left: 50%; z-index: 2; pointer-events: none;
+    width: 42px; height: 42px; margin: -21px 0 0 -21px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.16);
+    border-top-color: rgba(150,240,170,0.95);   /* CRT-green accent */
+    box-shadow: 0 0 14px rgba(120,220,150,0.35);
+    animation: crt-spin 0.8s linear infinite;
+    transition: opacity 0.28s ease;
+  }
+  @keyframes crt-spin { to { transform: rotate(360deg); } }
+  /* Scanlines + vignette over the glass (purely cosmetic; never eats clicks). */
+  #crt-yt-scan {
+    position: absolute; inset: 0; z-index: 3; pointer-events: none;
+    background:
+      repeating-linear-gradient(to bottom, rgba(0,0,0,0.16) 0 1px, rgba(0,0,0,0) 1px 3px),
+      radial-gradient(120% 120% at 50% 50%, rgba(0,0,0,0) 58%, rgba(0,0,0,0.45) 100%);
+  }
+  #crt-yt-frame.loaded #crt-yt-poster,
+  #crt-yt-frame.loaded #crt-yt-spin { opacity: 0; }
+  /* Channel-change static-blink: drop the iframe out fast (the new channel's poster shows through),
+     then it fades back as the player loads. Declared after .loaded so it wins on equal specificity. */
+  #crt-yt-frame.switching iframe { opacity: 0; transition: opacity 0.06s linear; }
+  /* On-screen channel bar under the set (works on desktop + mobile). */
+  #crt-yt-controls {
+    display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 14px;
+  }
+  #crt-yt-controls button {
+    width: 44px; height: 34px; border-radius: 7px; cursor: pointer;
+    border: 1px solid rgba(150,240,170,0.35); background: rgba(10,16,12,0.92);
+    color: rgba(170,245,190,0.95); font: 400 15px/1 Arial, sans-serif;
     display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 3px 12px rgba(0,0,0,0.5);
   }
-  #crt-pb-note .cpn-x:hover { background: rgba(255,180,60,0.18); color: rgba(255,235,190,1); }
-  @media (pointer: coarse) { #crt-pb-note { display: none !important; } }
+  #crt-yt-controls button:hover { background: rgba(22,40,28,0.95); color: rgba(200,255,215,1); }
+  #crt-ch-label {
+    min-width: 96px; text-align: center;
+    font: 700 13px/1 monospace; letter-spacing: 0.12em;
+    color: rgba(150,240,170,0.92); text-shadow: 0 0 8px rgba(120,220,150,0.4);
+  }
+  /* Desktop drives channels with the side knobs (+ arrow keys), so the bottom ◀/▶ are hidden and
+     only the CH readout shows. On coarse pointers there's no room for side dials → flip it: hide
+     the knobs, show the bottom ◀/▶ bar. */
+  #crt-ch-prev, #crt-ch-next { display: none; }
+  @media (pointer: coarse) {
+    .crt-knob { display: none; }
+    #crt-yt-stage { gap: 0; }
+    #crt-ch-prev, #crt-ch-next { display: flex; }
+  }
+  #crt-yt-close {
+    position: absolute; top: -16px; right: -16px; z-index: 4;
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.25); background: rgba(8,10,8,0.92); color: #e8f3ea;
+    font: 400 22px/1 Georgia, serif; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  }
+  #crt-yt-close:hover { background: rgba(22,34,24,0.95); }
 
   /* Crate prev/next reuse the exhibit carousel nav style (side, vertically centred).
      Desktop cycles records with the up/down arrow keys, so the side buttons are mobile-only. */
@@ -791,18 +860,28 @@
     <div id="mpc-yt-spin"></div>
   </div>
 </div>
-<!-- YouTube embed that plays inside the focused CRT screen window (JS sizes the outer to fit;
-     inner #crt-yt-frame does the rounded clip — same two-level structure as #mpc-yt-embed). -->
+<!-- CRT "channels": a CENTERED modal lightbox, structurally identical to #mpc-yt-embed (the
+     known-good embed that ad-blockers leave alone — a fixed, JS-repositioned iframe reads as a
+     floating/sticky video player and gets cosmetically filtered, which is what blocked the old
+     screen-pinned CRT embed). Retro CRT character is pure CSS dressing (bezel + scanlines +
+     static-blink), NOT positioning. Two-level: composited outer → #crt-yt-frame does the clip. -->
 <div id="crt-yt-embed">
-  <div id="crt-yt-frame">
-    <iframe id="crt-yt-iframe" scrolling="no" frameborder="no" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+  <button id="crt-yt-close" aria-label="close">&times;</button>
+  <div id="crt-yt-stage">
+    <button id="crt-knob-prev" class="crt-knob" aria-label="previous channel"><span class="crt-knob-face"></span></button>
+    <div id="crt-yt-frame">
+      <iframe id="crt-yt-iframe" scrolling="no" frameborder="no" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
+      <div id="crt-yt-poster"></div>
+      <div id="crt-yt-spin"></div>
+      <div id="crt-yt-scan"></div>
+    </div>
+    <button id="crt-knob-next" class="crt-knob" aria-label="next channel"><span class="crt-knob-face"></span></button>
   </div>
-</div>
-<!-- Persistent desktop heads-up while the CRT video is focused (CSS-shown via #crt-yt-embed.visible,
-     so no JS module needed). Dismissible via the × (inline handler; no CSP on this site). -->
-<div id="crt-pb-note">
-  <span><b>No video?</b> A browser ad-blocker or privacy extension is likely blocking it &mdash; disable it for this page (or allow youtube&#8209;nocookie.com), then reload.</span>
-  <button type="button" class="cpn-x" aria-label="dismiss" onclick="this.parentNode.style.display='none'">&times;</button>
+  <div id="crt-yt-controls">
+    <button id="crt-ch-prev" aria-label="previous channel">&#9664;</button>
+    <span id="crt-ch-label">CH 01 / 09</span>
+    <button id="crt-ch-next" aria-label="next channel">&#9654;</button>
+  </div>
 </div>
 <button id="crate-prev-btn" class="exhibit-nav-btn" aria-label="previous record">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M15 18l-6-6 6-6"/></svg>

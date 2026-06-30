@@ -27,13 +27,12 @@ import { core } from '../core.js';
 const {
   THREE, scene, camera, renderer, isMobile, floaters, MAX_ANISO,
   CRATE_DIST, OPEN_DUR, CLOSE_DUR,
-  registerExhibit,
+  registerExhibit, keys,
   initTex: _initTex,
   setFloaterVisible: _setFloaterVisible,
   restoreFloater: _restoreExhibitFloater,
   disposeObject3D: _disposeCrateObject,
   setTriggerFloater, beginExhibitDPR, endExhibitDPR, setCD, hidePrompt,
-  computeFocusTarget: _computeExhibitFocusTarget, syncCamera: _syncCamera,
   elMmWrap: _elMmWrap, elUi: _elUi, jZone: _jZone,
   scheduleIdle,
 } = core;
@@ -101,33 +100,17 @@ const _secMaxY = Math.max(sy + openH / 2 + bezT, panelY + panelH / 2 + bezT);
 const SEC_CX = (_secMinX + _secMaxX) / 2;
 const SEC_CY = (_secMinY + _secMaxY) / 2;
 const SEC_CZ = fz;                         // front plane (per-mesh Z offsets stay small around it)
-const SEC_W  = _secMaxX - _secMinX;        // combined width  (fed to the focus-fit call)
+const SEC_W  = _secMaxX - _secMinX;        // combined width  (still sizes the "ready" halo plane)
 const SEC_H  = _secMaxY - _secMinY;        // combined height
-const CRT_FOCUS_DUR    = 0.55;             // lift / settle / return tween (matches the crate's feel)
-const CRT_FOCUS_MARGIN = 1.12;             // >1 leaves breathing room around the focused content
+// (SEC_CX/CY/CZ position the section group inside the cabinet model; the section no longer lifts
+//  out, so the focus-tween constants/scratch are gone — only the halo still reads SEC_W/SEC_H.)
 
-// ── Section-focus state (the screen + panel lift out to front-facing focus) ──
-let crtFocusPhase = null;   // 'focusing' | 'focused' | 'unfocusing' | null
-let crtFocusT     = 0;
-const _secFromPos  = new THREE.Vector3();
-const _secFromQuat = new THREE.Quaternion();
-let   _secFromScale = 1;
-const _secToPos    = new THREE.Vector3();
-const _secToQuat   = new THREE.Quaternion();
-let   _secToScale  = 1;
-const _secLerpQuat = new THREE.Quaternion();
-const _crtSecHomeMat = new THREE.Matrix4().makeTranslation(SEC_CX, SEC_CY, SEC_CZ);
-const _tmpMat   = new THREE.Matrix4();
-const _tmpScale = new THREE.Vector3();
-// Scratch for measuring + recentring the focused content on screen.
-const _focusBox = new THREE.Box3();
-const _focusCtr = new THREE.Vector3();
-const _camDir   = new THREE.Vector3();
-const _toCtr    = new THREE.Vector3();
-const _lateral  = new THREE.Vector3();
-// Unlike the MPC (content on the +Y top, needing a pre-rotation toward the camera), the CRT's
-// content faces +Z — the natural plane-front direction core.computeFocusTarget already orients
-// toward the camera — so NO _faceQuat is applied here.
+// ── Watch state — is the centered video modal up? Replaces the old three-phase screen-lift focus.
+//    The video is now an HTML lightbox (#crt-yt-embed), structurally identical to the MPC's (which
+//    ad-blockers leave alone), NOT an iframe pinned to the 3D glass — so the section never reparents
+//    or lifts; the cabinet just sits open while the modal plays on top. ──
+let crtWatching = false;
+let _crtNavL = false, _crtNavR = false;   // desktop ← / → channel-key edges (live only while watching)
 
 // ── Bouncing screensaver state (classic DVD-logo edge reflection) ──
 // All in screen-local units, as an offset from the screen centre (_logoBaseX/Y).
@@ -1017,7 +1000,8 @@ function _prewarmCrtToneMap() {
 function _openCrt(px, pz, openYaw) {
   if (crtPhase) return;
   _buildCrtAssets();
-  _crtPreconnect();   // warm the video hosts now; the iframe src is set later, on focus
+  _crtPreconnect();      // warm the video hosts now; the iframe src is set later, on watch
+  _preloadCrtThumbs();   // prime the channel posters during idle so the first press is instant
   beginExhibitDPR();
 
   const fl = floaters[CRT.floaterIdx];
@@ -1062,9 +1046,7 @@ function _openCrt(px, pz, openYaw) {
 }
 
 function _closeCrt() {
-  // The section may still be reparented to the scene (mid-focus dismiss) — re-home it so it
-  // travels with the cached model rather than being orphaned / disposed separately.
-  if (crtFocusPhase || (CRT.section && CRT.section.parent !== CRT._model)) _resetCrtFocus();
+  _resetCrtWatch();   // stop the clip + drop the modal (the section never reparents now)
   _resetCrtDials();   // back to channel 1, dials at rest (cabinet model is cached across opens)
   if (crtGroup) {
     if (crtGroup.userData.model) crtGroup.remove(crtGroup.userData.model); // keep the cached model
@@ -1092,50 +1074,40 @@ function _closeCrt() {
 
 function _dismissCrt() {
   if (!crtPhase || crtPhase === 'closing') return;
-  if (crtFocusPhase) _resetCrtFocus();   // snap the section home so the cached model stays intact
+  if (crtWatching) _resetCrtWatch();   // tear the modal down so it doesn't linger over the close
   _hideCrtHint();
   crtPhase = 'closing';
   crtT = 1;
   _restoreExhibitFloater();
 }
 
-// ══ SECTION FOCUS — the screen + control panel lift out of the cabinet, turn flat-on, and
-//    scale up to fill the view (a closer look), reusing the carousel/crate/MPC focus maths. ══
+// (The old screen-lift focus had a render-DPR cap because the lifted section filled ~94% of the
+//  viewport. The section no longer lifts — the video is an HTML modal over the cabinet — so the
+//  WebGL fill stays at cabinet size and the focus DPR cap is gone.)
 
-// ── Focus render-resolution cap ──
-// While focused, the section fills ~94% of the viewport with the PBR screen + two additive
-// layers (glare, logo). At the raised exhibit DPR that's badly fill-rate bound on HiDPI
-// displays, and core's adaptive DPR is PAUSED while any exhibit is open — so it never backs
-// off. Cap the render DPR for the duration of focus (the focused content is noisy CRT static,
-// so the lower resolution is imperceptible), then restore it on the way out. Bypasses core's
-// DPR bookkeeping deliberately: it leaves curDPR/_lastAppliedDPR at EXHIBIT_DPR, and we restore
-// the renderer to exactly that, so endExhibitDPR() on close stays consistent.
-const CRT_FOCUS_MAX_DPR = 1.0;   // bump up for crisper focus if a machine can spare the fill
-let _crtSavedPR = null;
-
-function _applyCrtFocusDPR() {
-  if (_crtSavedPR !== null || !renderer) return;          // already capped
-  _crtSavedPR = renderer.getPixelRatio();
-  if (_crtSavedPR > CRT_FOCUS_MAX_DPR) renderer.setPixelRatio(CRT_FOCUS_MAX_DPR);
-}
-function _restoreCrtFocusDPR() {
-  if (_crtSavedPR === null || !renderer) return;
-  renderer.setPixelRatio(_crtSavedPR);
-  _crtSavedPR = null;
-}
-
-// ══ SCREEN VIDEO — a YouTube embed that plays "inside" the focused TV glass ══
+// ══ SCREEN VIDEO — a YouTube embed shown in a CENTERED modal lightbox ══
 // You can't render YouTube into a WebGL texture (cross-origin), so the established pattern in
-// this app (see the MPC) is an HTML <iframe> overlay. Unlike the MPC's centred panel, this
-// one is sized per-frame (_fitCrtYtToScreen) to track the screen mesh's projected rectangle —
-// so the clip sits exactly over the TV glass while the silver frame + control panel still show
-// around it. Shown once the section settles into focus; src is cleared on the way out to stop
-// playback. Focusing is a user gesture (Space/E/tap), so autoplay with sound is allowed.
+// this app is an HTML <iframe> overlay. This MIRRORS the MPC's centred-modal embed exactly — a
+// fixed, centered lightbox (#crt-yt-embed) — rather than the old approach of pinning the iframe
+// over the 3D glass per-frame. A fixed, JS-repositioned video iframe reads to ad-blockers as a
+// floating/sticky player and gets cosmetically filtered (that's what hid the old CRT clips); a
+// centered modal does not, so an ad-blocker can't tell it apart from the known-good MPC embed.
+// Opening it is a user gesture (Space/E/tap), so autoplay with sound is allowed.
 const _elCrtYt       = document.getElementById('crt-yt-embed');
+const _elCrtYtFrame  = document.getElementById('crt-yt-frame');    // gets .loaded to crossfade poster out / .switching to blink
 const _elCrtYtIframe = document.getElementById('crt-yt-iframe');
-// Embed URLs — the "channels". The big VHF/UHF dials step through this list (VHF next, UHF prev).
-// YouTube uses the privacy-friendly -nocookie host like the MPC and autoplays off the channel-change
-// gesture. All load in the one #crt-yt-iframe.
+const _elCrtYtPoster = document.getElementById('crt-yt-poster');   // channel thumbnail shown while the player loads
+const _elCrtYtClose  = document.getElementById('crt-yt-close');
+const _elCrtChPrev   = document.getElementById('crt-ch-prev');
+const _elCrtChNext   = document.getElementById('crt-ch-next');
+const _elCrtChLabel  = document.getElementById('crt-ch-label');
+const _elCrtKnobPrev = document.getElementById('crt-knob-prev');    // desktop channel dials flanking the screen
+const _elCrtKnobNext = document.getElementById('crt-knob-next');
+const _elCrtKnobFaceP = _elCrtKnobPrev && _elCrtKnobPrev.querySelector('.crt-knob-face');
+const _elCrtKnobFaceN = _elCrtKnobNext && _elCrtKnobNext.querySelector('.crt-knob-face');
+let _crtLoadTimer = null;   // safety fallback: reveal the player even if iframe.onload never fires
+// Embed URLs — the "channels". The on-screen ◀/▶ + arrow keys step through this list, and the big
+// VHF/UHF dials turn in sync (VHF next, UHF prev). -nocookie host like the MPC; all load in #crt-yt-iframe.
 const _yt = id => `https://www.youtube-nocookie.com/embed/${id}?rel=0&autoplay=1&playsinline=1`;
 const CRT_VIDEOS = [
   _yt('khrkw63aMwc'),
@@ -1149,49 +1121,28 @@ const CRT_VIDEOS = [
   _yt('Y8gudyUHMgw'),
 ];
 let _crtVidIdx = 0;
-const _ytCorner = new THREE.Vector3();
-// Section-local centre + half-extents of the VISIBLE glass = the bezel opening (openW × openH),
-// NOT the slightly-oversized glass mesh (scrW = openW*1.02) which tucks under the bezel. Z sits
-// just behind the front face. SEC_CZ === fz so the local z is a small negative offset.
-// FIT_INSET shrinks a hair so perspective keystone (the screen sits left of the view axis) never
-// pushes the rectangle out over the silver bezel.
-const CRT_YT_FIT_INSET = 0.97;
-const _ytScrCX = sx - SEC_CX, _ytScrCY = sy - SEC_CY, _ytScrCZ = (fz - 0.04) - SEC_CZ;
-const _ytHalfW = openW * 0.5 * CRT_YT_FIT_INSET, _ytHalfH = openH * 0.5 * CRT_YT_FIT_INSET;
 
-// Project the 4 flat corners of the glass window to pixels and size the iframe to their bounding
-// rect. Using the FLAT opening (not the bulged mesh's AABB) keeps it tight to the glass — an AABB
-// over-estimates because the forward bulge gives the box phantom front corners the mesh never
-// reaches. Cheap (4 projected points) — safe to run per-frame.
-function _fitCrtYtToScreen() {
-  if (!_elCrtYt || !CRT.section) return;
-  CRT.section.updateWorldMatrix(true, false);
-  const m = CRT.section.matrixWorld;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (let i = 0; i < 4; i++) {
-    _ytCorner.set(
-      _ytScrCX + (i & 1 ? _ytHalfW : -_ytHalfW),
-      _ytScrCY + (i & 2 ? _ytHalfH : -_ytHalfH),
-      _ytScrCZ,
-    ).applyMatrix4(m).project(camera);
-    const px = (_ytCorner.x * 0.5 + 0.5) * window.innerWidth;
-    const py = (-_ytCorner.y * 0.5 + 0.5) * window.innerHeight;
-    if (px < minX) minX = px; if (px > maxX) maxX = px;
-    if (py < minY) minY = py; if (py > maxY) maxY = py;
-  }
-  // While focused the camera is locked, so the projected corners barely move — only touch the
-  // iframe's layout when they actually changed (>0.5px), avoiding a per-frame style write.
-  const w = maxX - minX, h = maxY - minY;
-  if (Math.abs(minX - _ytFitL) > 0.5 || Math.abs(minY - _ytFitT) > 0.5 ||
-      Math.abs(w - _ytFitW) > 0.5 || Math.abs(h - _ytFitH) > 0.5) {
-    const s = _elCrtYt.style;
-    s.left = minX + 'px'; s.top = minY + 'px';
-    s.width = w + 'px'; s.height = h + 'px';
-    _ytFitL = minX; _ytFitT = minY; _ytFitW = w; _ytFitH = h;
-  }
+// Derive each channel's poster from its embed URL (YouTube → its hqdefault thumbnail), so the press
+// reads as instant: the thumbnail paints behind a spinner while the player loads. Mirrors the MPC.
+function _crtPoster(url) {
+  const m = url && url.match(/\/embed\/([\w-]+)/);
+  return m ? `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg` : null;
 }
-// Last-written iframe rect, so _fitCrtYtToScreen can skip redundant style writes.
-let _ytFitL = -1, _ytFitT = -1, _ytFitW = -1, _ytFitH = -1;
+const CRT_POSTERS = CRT_VIDEOS.map(_crtPoster);
+
+// Prime the browser cache with the channel thumbnails during idle time so the poster paints with
+// zero delay. One image per idle tick (mirrors the MPC) so it never competes with the frame budget.
+let _crtThumbsQueued = false;
+function _preloadCrtThumbs(i = 0) {
+  if (i === 0) { if (_crtThumbsQueued) return; _crtThumbsQueued = true; }
+  if (i >= CRT_POSTERS.length) return;
+  const src = CRT_POSTERS[i];
+  if (src) { const img = new Image(); img.src = src; }
+  scheduleIdle(() => _preloadCrtThumbs(i + 1));
+}
+// (The old _fitCrtYtToScreen projected the glass corners every frame to pin the iframe over the
+//  3D screen — that per-frame-repositioned fixed iframe was the ad-blocker signature. Gone: the
+//  modal is a static centered box.)
 
 // Warm TCP/TLS to the video hosts the instant the CRT opens — well before the iframe src is
 // set on focus — so the first video starts faster. Done dynamically (not a static <head>
@@ -1208,70 +1159,101 @@ function _crtPreconnect() {
     });
 }
 
-// (Re)load a channel URL into the iframe. Shared by focus-show + channel-change. Whether a clip is
-// actually visible can't be detected reliably across the cross-origin frame (a blocker fires `load`
-// on the blanked frame, and probes get blocked too), so we don't try — a persistent desktop
-// heads-up (#crt-adblock-note in index.html, shown whenever the embed is .visible) covers the
-// ad-blocker case instead, and it's dismissible.
+// ── Loading facade — set the channel's poster + reset the crossfade so the thumbnail shows while
+//    the player (re)loads. Mirrors the MPC's facade. ──
+function _resetCrtFacade(idx) {
+  const poster = CRT_POSTERS[idx];
+  if (_elCrtYtPoster) _elCrtYtPoster.style.backgroundImage = poster ? `url("${poster}")` : 'none';
+  if (_elCrtYtFrame)  _elCrtYtFrame.classList.remove('loaded');
+}
+
+// Write the "CH nn / NN" readout in the on-screen channel bar.
+function _crtChannelLabel() {
+  if (!_elCrtChLabel) return;
+  const pad = x => String(x).padStart(2, '0');
+  _elCrtChLabel.textContent = `CH ${pad(_crtVidIdx + 1)} / ${pad(CRT_VIDEOS.length)}`;
+}
+
+// (Re)load a channel URL into the iframe. Crossfade the poster facade out when the player document
+// loads; a safety timer reveals the player even if onload never fires (flaky network / blocked frame).
 function _loadCrtYt(url) {
   if (!_elCrtYtIframe) return;
-  if (_elCrtYtIframe.src !== url) _elCrtYtIframe.src = url;
+  if (_elCrtYtIframe.src === url) { _elCrtYtFrame?.classList.add('loaded'); return; }   // same clip — reveal now
+  _elCrtYtIframe.onload = () => { clearTimeout(_crtLoadTimer); _elCrtYtFrame?.classList.add('loaded'); };
+  clearTimeout(_crtLoadTimer);
+  _crtLoadTimer = setTimeout(() => _elCrtYtFrame?.classList.add('loaded'), 4000);
+  _elCrtYtIframe.src = url;
 }
 
 function _showCrtYt() {
   if (!_elCrtYt || !_elCrtYtIframe) return;
   const url = CRT_VIDEOS[_crtVidIdx];
   if (!url) return;
-  // Order matters: SIZE the overlay over the glass and make it visible BEFORE the cross-origin
-  // iframe loads. The box starts at 0×0 (and stays there on the first focus until fit runs); if
-  // the YouTube src is set while the frame is still zero-size, Chromium render-throttles the
-  // cross-origin iframe as "hidden" and — once the app itself is nested inside skindeepmag's
-  // outer iframe — it never recovers when the box is later resized: audio plays but the video
-  // never paints (the WebGL static shows through). Sizing first means the frame is never created
-  // at 0×0. (Top-level localhost tolerates the old order, which is why it only broke on deploy.)
+  _resetCrtFacade(_crtVidIdx);   // poster + spinner showing before the player fetches
+  _crtChannelLabel();
+  // Make the modal visible (a non-zero box) BEFORE setting src — the same size-before-src guard the
+  // MPC relies on so the cross-origin frame paints in skindeepmag's nested production iframe (never
+  // created at 0×0). The fixed modal box has its full size the instant .visible applies.
   _elCrtYt.classList.add('visible');
-  _fitCrtYtToScreen();
-  _loadCrtYt(url);   // (re)load at full size
+  _loadCrtYt(url);
 }
 
 function _hideCrtYt() {
   if (!_elCrtYt) return;
-  _elCrtYt.classList.remove('visible', 'switching');
+  _elCrtYt.classList.remove('visible');
+  if (_elCrtYtFrame) _elCrtYtFrame.classList.remove('switching', 'loaded');
   clearTimeout(_crtSwitchTimer);
-  if (_elCrtYtIframe) _elCrtYtIframe.src = '';   // clearing src halts playback
+  clearTimeout(_crtLoadTimer);
+  if (_elCrtYtIframe) { _elCrtYtIframe.onload = null; _elCrtYtIframe.src = ''; }   // clearing src halts playback
+  if (_elCrtYtPoster) _elCrtYtPoster.style.backgroundImage = 'none';
 }
 
-// ── Channel switching (driven by the VHF/UHF dials) ──
+// ── Channel switching (on-screen ◀/▶ + arrow keys; the VHF/UHF dials turn in sync) ──
 const _crtRay = new THREE.Raycaster();
 const _crtPtr = new THREE.Vector2();
 let _crtSwitchTimer = null;
 
-// Brief "change the channel" blink — fade the iframe out fast so the live WebGL snow shows
-// through, then fade it back in over the player reload.
+// Brief "change the channel" static-blink — drop the iframe out fast (the new channel's poster shows
+// through), then it fades back as the player reloads.
 function _flashCrtChannel() {
-  if (!_elCrtYt) return;
-  _elCrtYt.classList.add('switching');
+  if (!_elCrtYtFrame) return;
+  _elCrtYtFrame.classList.add('switching');
   clearTimeout(_crtSwitchTimer);
-  _crtSwitchTimer = setTimeout(() => _elCrtYt && _elCrtYt.classList.remove('switching'), 260);
+  _crtSwitchTimer = setTimeout(() => _elCrtYtFrame && _elCrtYtFrame.classList.remove('switching'), 260);
 }
 
-// Step the video list by dir (+1 next / -1 previous), reload the iframe (autoplay rides the tap/
-// click gesture), turn the matching dial, and blink to static.
+// Turn the on-screen DOM knob (the one matching dir) a notch, accumulating its angle on the element
+// so it keeps spinning the right way. Mirrors the cabinet's 3D dial turn; harmless when the knob is
+// hidden (mobile). Angle is stored on the face's dataset so no extra module state is needed.
+function _turnCrtKnobDom(dir) {
+  const face = dir < 0 ? _elCrtKnobFaceP : _elCrtKnobFaceN;
+  if (!face) return;
+  const deg = (parseFloat(face.dataset.deg) || 0) + (dir || 1) * 42;
+  face.dataset.deg = deg;
+  face.style.transform = `rotate(${deg}deg)`;
+}
+
+// Step the video list by dir (+1 next / -1 previous), reset the facade to the new channel's poster,
+// reload the iframe (autoplay rides the click/tap/key gesture), turn the matching dials, blink.
 function _changeCrtChannel(dir) {
-  if (crtFocusPhase !== 'focused' || CRT_VIDEOS.length < 2) return;
+  if (!crtWatching || CRT_VIDEOS.length < 2) return;
   const n = CRT_VIDEOS.length;
   _crtVidIdx = (_crtVidIdx + (dir || 1) + n) % n;
-  _loadCrtYt(CRT_VIDEOS[_crtVidIdx]);   // re-arms the blocked-check for the new channel
+  _resetCrtFacade(_crtVidIdx);
+  _crtChannelLabel();
+  _loadCrtYt(CRT_VIDEOS[_crtVidIdx]);
   if (CRT.channelDials) {
     const d = CRT.channelDials.find(c => c.dir === (dir || 1)) || CRT.channelDials[0];
     if (d) d.turnTo += (dir || 1) * (Math.PI / 3);   // a satisfying click-to-next turn
   }
+  _turnCrtKnobDom(dir);   // spin the matching on-screen dial in sync
   _flashCrtChannel();
 }
 
-// Hit-test the channel dials at a client (x,y); returns the dial direction or null.
+// Hit-test the channel dials at a client (x,y); returns the dial direction or null. The dials sit on
+// the cabinet behind/beside the modal — clicking a visible one still switches (a bonus to the bar).
 function _crtDialDirAtClient(clientX, clientY) {
-  if (!CRT.channelHits || crtFocusPhase !== 'focused' || !renderer || !renderer.domElement) return null;
+  if (!CRT.channelHits || !crtWatching || !renderer || !renderer.domElement) return null;
   const rect = renderer.domElement.getBoundingClientRect();
   _crtPtr.x = ((clientX - rect.left) / rect.width) * 2 - 1;
   _crtPtr.y = -((clientY - rect.top) / rect.height) * 2 + 1;
@@ -1284,126 +1266,39 @@ function _crtDialDirAtClient(clientX, clientY) {
 // dial rotation + the current channel must be reset explicitly on close).
 function _resetCrtDials() {
   if (CRT.channelDials) for (const d of CRT.channelDials) { d.turnTo = 0; d.group.rotation.z = 0; }
+  for (const face of [_elCrtKnobFaceP, _elCrtKnobFaceN]) {
+    if (face) { face.dataset.deg = '0'; face.style.transform = ''; }
+  }
   _crtVidIdx = 0;
 }
 
-// Live home (world) transform of the section had it stayed inside the model — the unit bobs
-// each frame, so the unfocus tween re-targets this every frame.
-function _crtSectionHomeWorld(outPos, outQuat) {
-  CRT._model.updateWorldMatrix(true, false);
-  _tmpMat.multiplyMatrices(CRT._model.matrixWorld, _crtSecHomeMat);
-  _tmpMat.decompose(outPos, outQuat, _tmpScale);
-  return _tmpScale.x;
-}
+// ══ WATCH MODE — open / close the centered video modal. Replaces the old screen-lift focus:
+//    no reparenting, no tween, no DPR cap. The cabinet stays open behind the modal. ══
 
-function _refreshCrtFocusTarget() {
-  // Inflate the target panel size by the margin so the content fills less than the full
-  // viewport — a clear border so nothing runs off the edge. No _faceQuat: CRT content faces +Z,
-  // which core.computeFocusTarget already turns toward the camera.
-  _secToScale = _computeExhibitFocusTarget(_secToPos, _secToQuat, SEC_W * CRT_FOCUS_MARGIN, SEC_H * CRT_FOCUS_MARGIN);
-}
-
-// Measure where the visible content (screen + faceplate, which bound the full extent) actually
-// lands and slide the section sideways/up so its centre sits on the camera axis — guaranteeing
-// equal blank space regardless of the off-centre window layout or perspective skew.
-function _recenterCrtFocus(w) {
-  if (!CRT.section || !CRT.screen || !CRT.faceplate) return;
-  CRT.section.updateMatrixWorld(true);
-  _focusBox.makeEmpty();
-  _focusBox.expandByObject(CRT.screen);
-  _focusBox.expandByObject(CRT.faceplate);
-  _focusBox.getCenter(_focusCtr);
-
-  camera.getWorldDirection(_camDir);
-  _toCtr.copy(_focusCtr).sub(camera.position);
-  const along = _toCtr.dot(_camDir);                      // depth of the content centre on the view axis
-  _lateral.copy(_toCtr).addScaledVector(_camDir, -along); // its off-axis component
-  CRT.section.position.addScaledVector(_lateral, -(w === undefined ? 1 : w));
-}
-
-function _startCrtFocus() {
-  if (crtFocusPhase || crtPhase !== 'open' || !CRT.section) return;
-  _syncCamera();
-  scene.attach(CRT.section);                 // reparent to world, preserving the section's pose
-  _secFromPos.copy(CRT.section.position);
-  _secFromQuat.copy(CRT.section.quaternion);
-  _secFromScale = CRT.section.scale.x;
+// Open the modal. Triggered by Space/E (desktop) or tap (mobile) — a user gesture, so autoplay
+// with sound is allowed. Hide the "ready" halo + the open hint, then show the clip.
+function _startCrtWatch() {
+  if (crtWatching || crtPhase !== 'open') return;
+  crtWatching = true;
   if (CRT.halo) CRT.halo.visible = false;
-  _applyCrtFocusDPR();   // cap render resolution for the fill-heavy fullscreen focus
-  _refreshCrtFocusTarget();
-  crtFocusPhase = 'focusing';
-  crtFocusT = 0;
-  _hideCrtHint();
+  _showCrtYt();
+  _showCrtWatchHint();
 }
 
-function _startCrtUnfocus() {
-  if (crtFocusPhase !== 'focused' || !CRT.section) return;
-  _hideCrtYt();   // stop the clip the moment we begin stepping back
-  _secFromPos.copy(CRT.section.position);
-  _secFromQuat.copy(CRT.section.quaternion);
-  _secFromScale = CRT.section.scale.x;
-  crtFocusPhase = 'unfocusing';
-  crtFocusT = 0;
-  _hideCrtHint();
-}
-
-// Re-home the section under the cached model with its original local transform.
-function _homeCrtSection() {
-  if (!CRT.section) return;
-  CRT._model.add(CRT.section);
-  CRT.section.position.set(SEC_CX, SEC_CY, SEC_CZ);
-  CRT.section.quaternion.identity();
-  CRT.section.scale.setScalar(1);
-}
-
-function _finishCrtUnfocus() {
-  _homeCrtSection();
-  _restoreCrtFocusDPR();   // back at cabinet size — restore full exhibit resolution
-  crtFocusPhase = null;
-  crtFocusT = 0;
-  if (crtPhase === 'open') _showCrtOpenHint();   // back at the cabinet — re-offer "focus screen"
-}
-
-// Hard reset (on dismiss/close) — snap the section home immediately, no tween.
-function _resetCrtFocus() {
+// Close the modal back to the open cabinet (Escape / × / tap-away). Stops the clip.
+function _closeCrtWatch() {
+  if (!crtWatching) return;
   _hideCrtYt();
-  _homeCrtSection();
-  _restoreCrtFocusDPR();
-  if (CRT.halo) CRT.halo.visible = false;
-  crtFocusPhase = null;
-  crtFocusT = 0;
-  _hideCrtHint();
+  crtWatching = false;
+  if (crtPhase === 'open') _showCrtOpenHint();   // back at the cabinet — re-offer "watch"
 }
 
-function _tickCrtFocus(dt) {
-  if (!crtFocusPhase || !CRT.section) return;
-  const sec = CRT.section;
-  if (crtFocusPhase === 'focusing') {
-    _refreshCrtFocusTarget();
-    crtFocusT = Math.min(1, crtFocusT + dt / CRT_FOCUS_DUR);
-    const s = crtFocusT * crtFocusT * (3 - 2 * crtFocusT);
-    sec.position.lerpVectors(_secFromPos, _secToPos, s);
-    _secLerpQuat.slerpQuaternions(_secFromQuat, _secToQuat, s);
-    sec.quaternion.copy(_secLerpQuat);
-    sec.scale.setScalar(_secFromScale + (_secToScale - _secFromScale) * s);
-    _recenterCrtFocus(s);   // ease the screen-centring in with the lift (no pop at settle)
-    if (crtFocusT >= 1) { crtFocusPhase = 'focused'; _showCrtFocusHint(); _showCrtYt(); }
-  } else if (crtFocusPhase === 'focused') {
-    _refreshCrtFocusTarget();
-    sec.position.copy(_secToPos);
-    sec.quaternion.copy(_secToQuat);
-    sec.scale.setScalar(_secToScale);
-    _recenterCrtFocus(1);   // hold it screen-centred
-  } else if (crtFocusPhase === 'unfocusing') {
-    crtFocusT = Math.min(1, crtFocusT + dt / CRT_FOCUS_DUR);
-    const s = crtFocusT * crtFocusT * (3 - 2 * crtFocusT);
-    const homeScale = _crtSectionHomeWorld(_secToPos, _secToQuat);   // live (the unit bobs)
-    sec.position.lerpVectors(_secFromPos, _secToPos, s);
-    _secLerpQuat.slerpQuaternions(_secFromQuat, _secToQuat, s);
-    sec.quaternion.copy(_secLerpQuat);
-    sec.scale.setScalar(_secFromScale + (homeScale - _secFromScale) * s);
-    if (crtFocusT >= 1) _finishCrtUnfocus();
-  }
+// Hard reset (on dismiss / close of the whole unit) — stop the clip + drop watch state, no hint.
+function _resetCrtWatch() {
+  _hideCrtYt();
+  crtWatching = false;
+  if (CRT.halo) CRT.halo.visible = false;
+  _hideCrtHint();
 }
 
 // ── CONTROL HINTS ────────────────────────────────────────────────────────────
@@ -1426,34 +1321,35 @@ function _hideCrtHint() {
   if (_elCrtHint) _elCrtHint.classList.remove('visible', 'dim');
 }
 
-// Unit open, not yet focused — how to bring the screen forward. Unlike the MPC (which keeps a
-// glowing halo around its pad deck as a persistent "ready to focus" cue), the CRT has no other
-// affordance, so this discovery prompt stays put (no auto-dim) until the visitor focuses or
-// walks away — otherwise it fades after a few seconds and the focus feature is undiscoverable.
+// Unit open, not yet watching — how to bring the video up. The "ready" halo around the screen is
+// the affordance, so this discovery prompt stays put (no auto-dim) until the visitor watches or
+// walks away — otherwise it fades after a few seconds and the feature is undiscoverable.
 function _showCrtOpenHint() {
   _setCrtHint(isMobile
-    ? `<span class="feh-label">tap to focus the screen</span>`
-    : `<span class="feh-key">spc</span><span class="feh-label">focus screen</span>`,
+    ? `<span class="feh-label">tap to watch</span>`
+    : `<span class="feh-key">spc</span><span class="feh-label">watch</span>`,
     0);
 }
 
-// Screen + panel focused — how to change the channel (when there's more than one video) and how
-// to step back.
-function _showCrtFocusHint() {
+// Modal up — how to change channel (when there's more than one video) and how to close. The
+// on-screen ◀/▶ buttons are always present too; this just surfaces the keyboard/tap shortcuts.
+function _showCrtWatchHint() {
   const sep = `<span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`;
   const ch = CRT_VIDEOS.length > 1
     ? (isMobile
-        ? `<span class="feh-label">tap a dial to change channel</span>${sep}`
-        : `<span class="feh-label">click a dial to change channel</span>${sep}`)
+        ? `<span class="feh-label">&#9664; &#9654; change channel</span>${sep}`
+        : `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span></span><span class="feh-label">channel</span>${sep}`)
     : '';
   _setCrtHint(isMobile
-    ? ch + `<span class="feh-label">tap away to return</span>`
-    : ch + `<span class="feh-key">esc</span><span class="feh-label">back</span>`,
+    ? ch + `<span class="feh-label">tap away to close</span>`
+    : ch + `<span class="feh-key">esc</span><span class="feh-label">close</span>`,
     CRT_VIDEOS.length > 1 ? 11000 : 9000);
 }
 
-// Mobile: a tap while focused returns to the cabinet (focus-open is driven by ctx.eEdge in
-// update(), matching the MPC). A short, stationary touch counts as a tap (same thresholds as core).
+// Mobile: a tap on the CANVAS while watching either changes channel (if it lands on a visible dial)
+// or closes the modal (anywhere else). Taps on the modal / its ◀/▶/× buttons land on those DOM
+// elements (pointer-events:auto) and never reach the canvas. Watch-open is driven by ctx.eEdge in
+// update(), matching the MPC. A short, stationary touch counts as a tap (same thresholds as core).
 if (isMobile && renderer && renderer.domElement) {
   const _crtTapStarts = {};
   renderer.domElement.addEventListener('touchstart', e => {
@@ -1463,14 +1359,12 @@ if (isMobile && renderer && renderer.domElement) {
     for (const t of e.changedTouches) {
       const s = _crtTapStarts[t.identifier];
       delete _crtTapStarts[t.identifier];
-      if (!s || crtFocusPhase !== 'focused') continue;
+      if (!s || !crtWatching) continue;
       const dx = t.clientX - s.x, dy = t.clientY - s.y;
       if (Date.now() - s.t >= 280 || dx * dx + dy * dy >= 225) continue;   // not a tap
-      // A tap on a channel dial changes the channel; a tap anywhere else steps back. (Taps on the
-      // video itself land on the iframe and never reach here.)
       const dir = _crtDialDirAtClient(t.clientX, t.clientY);
       if (dir !== null) _changeCrtChannel(dir);
-      else _startCrtUnfocus();
+      else _closeCrtWatch();
     }
   });
   renderer.domElement.addEventListener('touchcancel', e => {
@@ -1478,13 +1372,43 @@ if (isMobile && renderer && renderer.domElement) {
   });
 }
 
-// Desktop: click a channel dial to change the channel while the screen is focused. (Clicks on the
-// video go to the YouTube iframe; clicks elsewhere on the canvas do nothing.)
+// Desktop: click a visible channel dial to change the channel while watching. (Clicks on the video
+// go to the YouTube iframe; clicks on empty canvas do nothing — Escape / the × close the modal.)
 if (!isMobile && renderer && renderer.domElement) {
   renderer.domElement.addEventListener('click', e => {
-    if (crtFocusPhase !== 'focused') return;
+    if (!crtWatching) return;
     const dir = _crtDialDirAtClient(e.clientX, e.clientY);
     if (dir !== null) _changeCrtChannel(dir);
+  });
+}
+
+// On-screen channel bar + close button (in the modal; work on desktop + mobile).
+function _wireCrtBtn(el, fn) {
+  if (!el) return;
+  const f = e => { e.preventDefault(); e.stopPropagation(); fn(); };
+  el.addEventListener('click', f);
+  el.addEventListener('touchstart', f, { passive: false });
+}
+_wireCrtBtn(_elCrtChPrev, () => _changeCrtChannel(-1));
+_wireCrtBtn(_elCrtChNext, () => _changeCrtChannel(1));
+_wireCrtBtn(_elCrtKnobPrev, () => _changeCrtChannel(-1));   // desktop side dials
+_wireCrtBtn(_elCrtKnobNext, () => _changeCrtChannel(1));
+_wireCrtBtn(_elCrtYtClose, () => _closeCrtWatch());
+
+// Keyboard Escape can't reach us while the clip iframe holds focus: it's cross-origin, so its
+// keydowns fire in YouTube's document, not ours. When the iframe grabs focus (the player blurs the
+// top window), pull focus back to the overlay so the document receives keys again — the click that
+// moved focus already registered inside the player, so play/pause still toggles. Guarded on
+// document.hasFocus() so we don't fight a real tab-switch (then the iframe isn't the active element).
+if (_elCrtYt && _elCrtYtIframe) {
+  _elCrtYt.tabIndex = -1;   // focusable target, but not a Tab stop
+  window.addEventListener('blur', () => {
+    if (!crtWatching) return;
+    setTimeout(() => {
+      if (crtWatching && document.hasFocus() && document.activeElement === _elCrtYtIframe) {
+        try { _elCrtYt.focus({ preventScroll: true }); } catch (e) {}
+      }
+    }, 0);
   });
 }
 
@@ -1499,18 +1423,31 @@ registerExhibit({
   // and turns the scene into a spotlit TV in a dark room. The dedicated spot does the
   // lighting; the orb is left at only a faint floor (~18%).
   dimsRoom: () => (crtPhase === 'opening' || crtPhase === 'open') ? 0.95 : 0,
-  // Freeze the player while the screen + panel are held in focus (matches the crate / MPC).
-  locksMovement: () => crtFocusPhase === 'focusing' || crtFocusPhase === 'focused',
+  // Freeze the player while the video modal is up (matches the crate / MPC).
+  locksMovement: () => crtWatching,
   update(ctx) {
-    // ── Input ── layered Escape (focus → whole unit); Space/E (desktop) or tap (mobile, via
-    // eEdge) brings the screen + panel into focus.
+    // ── Input ── layered Escape (modal → whole unit); Space/E (desktop) or tap (mobile, via
+    // eEdge) brings the video modal up.
     if (ctx.iCD <= 0) {
       if (ctx.escEdge) {
-        if (crtFocusPhase === 'focused') { _startCrtUnfocus(); hidePrompt(); ctx.setCD(0.35); }
+        if (crtWatching) { _closeCrtWatch(); hidePrompt(); ctx.setCD(0.35); }
         else if (crtPhase && crtPhase !== 'closing') { _dismissCrt(); hidePrompt(); ctx.setCD(0.3); }
       } else if (ctx.eEdge) {
-        if (crtPhase === 'open' && !crtFocusPhase) { _startCrtFocus(); hidePrompt(); ctx.setCD(0.35); }
+        if (crtPhase === 'open' && !crtWatching) { _startCrtWatch(); hidePrompt(); ctx.setCD(0.35); }
       }
+    }
+
+    // Desktop ← / → cycle channels while watching (movement is locked in watch mode, so the arrows
+    // are free). Edges tracked every frame for clean single steps (mirrors the MPC's pad nav).
+    if (!isMobile && crtWatching) {
+      const l = !!keys['ArrowLeft'], r = !!keys['ArrowRight'];
+      if (ctx.iCD <= 0) {
+        if (l && !_crtNavL) { _changeCrtChannel(-1); ctx.setCD(0.2); }
+        else if (r && !_crtNavR) { _changeCrtChannel(1); ctx.setCD(0.2); }
+      }
+      _crtNavL = l; _crtNavR = r;
+    } else {
+      _crtNavL = _crtNavR = false;
     }
     // Open / close scale animation
     if (crtPhase === 'opening') {
@@ -1528,11 +1465,10 @@ registerExhibit({
     // Overhead key light ramps in/out with the open animation (crtT smoothstep).
     if (CRT.spot) CRT.spot.intensity = (crtT * crtT * (3 - 2 * crtT)) * SPOT_INT;
 
-    // Focus halo — frames the section while open & idle, signalling it's ready to be brought
-    // into focus. Breathing pulse on opacity + a subtle scale. Hidden during focus (and any
-    // non-open phase). (Mirrors the MPC pad halo.)
+    // "Ready to watch" halo — frames the screen while open & idle, signalling it's interactive.
+    // Breathing pulse on opacity + a subtle scale. Hidden while watching (and any non-open phase).
     if (CRT.halo) {
-      if (crtPhase === 'open' && !crtFocusPhase) {
+      if (crtPhase === 'open' && !crtWatching) {
         CRT.halo.visible = true;
         CRT.haloMat.opacity = 0.45 + (Math.sin(ctx.t * 3.0) * 0.5 + 0.5) * 0.5;  // 0.45 → 0.95
         const sc = 1 + Math.sin(ctx.t * 3.0) * 0.02;
@@ -1542,13 +1478,8 @@ registerExhibit({
       }
     }
 
-    // Section focus tween (lift-out / settle / return).
-    _tickCrtFocus(ctx.dt);
-
-    // Keep the screen video glued to the TV glass while focused (tracks any drift + resize).
-    if (crtFocusPhase === 'focused') _fitCrtYtToScreen();
-
-    // Ease each channel dial toward its target rotation (the click-to-next "turn").
+    // Ease each channel dial toward its target rotation (the click-to-next "turn") — the dials turn
+    // in sync with the on-screen channel bar, visible on the cabinet beside/behind the modal.
     if (CRT.channelDials) {
       for (let i = 0; i < CRT.channelDials.length; i++) {
         const d = CRT.channelDials[i];
@@ -1556,33 +1487,23 @@ registerExhibit({
       }
     }
 
-    // Focus ramp (0 in cabinet → 1 fully focused), shared by the self-lighting + dial glow below.
-    const _crtLit = crtFocusPhase === 'focused'   ? 1
-                  : crtFocusPhase === 'focusing'   ? crtFocusT
-                  : crtFocusPhase === 'unfocusing' ? 1 - crtFocusT
-                  : 0;
+    // Watch ramp — 1 while the modal is up, 0 otherwise (drives the dial glow). The section stays
+    // under the overhead key spot now (it never lifts away), so no per-metal self-lighting is needed.
+    const _crtLit = crtWatching ? 1 : 0;
 
-    // Self-light the section in focus — ramp emissive on its metals with the lift so the
-    // dials/knobs/bezel read once lifted away from the overhead spot (the screen + faceplate
-    // are emissive/unlit and read regardless).
-    if (CRT._secLitMats) {
-      for (let i = 0; i < CRT._secLitMats.length; i++) CRT._secLitMats[i].emissiveIntensity = _crtLit;
-    }
-
-    // Dial navigation glow — pulses around the VHF/UHF dials once focused, fading in/out with the
-    // lift, so the visitor sees the dials are the channel control. Off when there's only one video.
+    // Dial navigation glow — pulses around the VHF/UHF dials while watching, so the visitor sees the
+    // dials turn as the channel changes. Off when there's only one video.
     if (CRT.dialGlowMat) {
       const pulse = 0.5 + (Math.sin(ctx.t * 3.0) * 0.5 + 0.5) * 0.5;   // 0.5 → 1.0
       CRT.dialGlowMat.opacity = CRT_VIDEOS.length > 1 ? _crtLit * pulse : 0;
     }
 
-    // Hide the HUD while the section is held in focus (matches the crate / MPC).
-    const _focusUIHidden = crtFocusPhase === 'focusing' || crtFocusPhase === 'focused';
-    if (_focusUIHidden !== _crtUIHidden) {
-      _crtUIHidden = _focusUIHidden;
-      _elMmWrap.classList.toggle('focus-hidden', _focusUIHidden);
-      _elUi?.classList.toggle('focus-hidden', _focusUIHidden);
-      _jZone.classList.toggle('focus-hidden', _focusUIHidden);
+    // Hide the HUD while the video modal is up (matches the crate / MPC).
+    if (crtWatching !== _crtUIHidden) {
+      _crtUIHidden = crtWatching;
+      _elMmWrap.classList.toggle('focus-hidden', crtWatching);
+      _elUi?.classList.toggle('focus-hidden', crtWatching);
+      _jZone.classList.toggle('focus-hidden', crtWatching);
     }
 
     // Faint static glow — one scalar nudge + a cheap texture crawl (no array writes)
