@@ -1282,7 +1282,7 @@ function _showCrateBrowseHint() {
       `<span class="feh-label">tap arrows to browse records</span>`;
   } else {
     const browseKeys = multi
-      ? `<span class="cbh-keys"><span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">browse records</span><span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`
+      ? `<span class="cbh-keys"><span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">browse records</span><span class="feh-label feh-sep">&middot;</span>`
       : '';
     _elCrateBrowseHint.innerHTML = browseKeys + `<span class="feh-key">esc</span><span class="feh-label">close</span>`;
   }

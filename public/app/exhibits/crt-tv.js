@@ -1349,18 +1349,17 @@ function _showCrtGuide() {
   if (!_elCrtGuide || _crtGuideDismissed) return;
   const multi = CRT_VIDEOS.length > 1;
   if (_elCrtGuideBody) {
-    // The closing note about ↻ explains the reload button: YouTube sometimes refuses a clip with a
-    // transient "try again later" error — tapping ↻ re-kicks that channel. Always appended so the
-    // glyph in the channel bar isn't unexplained.
-    const reload = ` If a channel shows an error or won&rsquo;t play, tap <b>&#8635;&#xFE0E;</b> to reload it.`;
+    // NB: the ↻ reload guidance lives in the bottom hint pill only (see _showCrtWatchHint), NOT in
+    // this card — the card sits behind the centered embed, so any extra line slides under it. The
+    // pill is unobscured and already names ↻ prominently.
     if (isMobile) {
-      _elCrtGuideBody.innerHTML = (multi
+      _elCrtGuideBody.innerHTML = multi
         ? `This television plays a handful of channels. <b>Tap &#9664;&#xFE0E; &#9654;&#xFE0E;</b> (or the dials beside the screen) to change channel, and <b>tap away</b> to switch it off.`
-        : `<b>Tap away</b> from the screen to switch the television off.`) + reload;
+        : `<b>Tap away</b> from the screen to switch the television off.`;
     } else {
-      _elCrtGuideBody.innerHTML = (multi
+      _elCrtGuideBody.innerHTML = multi
         ? `This television plays a handful of channels. Use the <span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span> arrow keys (or the dials beside the screen) to change channel, and <span class="feh-key">esc</span> to switch it off.`
-        : `Press <span class="feh-key">esc</span> to switch the television off.`) + reload;
+        : `Press <span class="feh-key">esc</span> to switch the television off.`;
     }
   }
   _elCrtGuide.classList.add('visible');
@@ -1390,19 +1389,24 @@ function _showCrtOpenHint() {
 // Modal up — how to change channel (when there's more than one video) and how to close. The
 // on-screen ◀/▶ buttons are always present too; this just surfaces the keyboard/tap shortcuts.
 function _showCrtWatchHint() {
-  const sep = `<span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`;
+  // Each chunk is wrapped in .feh-seg so mobile can stack whole segments as centred rows (desktop
+  // keeps them inline, dot-separated — .feh-seg is display:contents there).
+  const seg = inner => `<span class="feh-seg">${inner}</span>`;
+  const sep = `<span class="feh-label feh-sep">&middot;</span>`;
+  // Mobile labels are kept terse ("channel", "tap to close") so the channel + close segments fit
+  // together on one row and the reload segment centres on the row below (2-on-top, 1-underneath).
   const ch = CRT_VIDEOS.length > 1
     ? (isMobile
-        ? `<span class="feh-label">&#9664;&#xFE0E; &#9654;&#xFE0E; change channel</span>${sep}`
-        : `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span></span><span class="feh-label">channel</span>${sep}`)
+        ? seg(`<span class="feh-label">&#9664;&#xFE0E; &#9654;&#xFE0E; channel</span>`)
+        : seg(`<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span></span><span class="feh-label">channel</span>`)) + sep
     : '';
+  const close = isMobile
+    ? seg(`<span class="feh-label">tap to close</span>`)
+    : seg(`<span class="feh-key">esc</span><span class="feh-label">close</span>`);
   // ↻ surfaces the reload button (#crt-ch-reload): YouTube occasionally throws a transient "try
   // again later" error on a clip — a tap on ↻ re-kicks it. Worth naming here so the glyph isn't a mystery.
-  const reload = `${sep}<span class="feh-label">&#8635;&#xFE0E; reload if it won&rsquo;t play</span>`;
-  _setCrtHint(isMobile
-    ? ch + `<span class="feh-label">tap away to close</span>` + reload
-    : ch + `<span class="feh-key">esc</span><span class="feh-label">close</span>` + reload,
-    CRT_VIDEOS.length > 1 ? 11000 : 9000);
+  const reload = sep + seg(`<span class="feh-label">&#8635;&#xFE0E; reload if it won&rsquo;t play</span>`);
+  _setCrtHint(ch + close + reload, CRT_VIDEOS.length > 1 ? 11000 : 9000);
   _showCrtGuide();   // fuller dismissable guidance alongside the button pill
 }
 

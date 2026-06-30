@@ -497,8 +497,26 @@
     font-family: Georgia, serif; font-size: 10px; letter-spacing: 0.12em;
     color: rgba(255,210,135,0.7); text-transform: uppercase;
   }
+  /* Hint segment separator — a faint inline dot between segments on desktop; hidden on mobile,
+     where segments stack instead (see the coarse rule). */
+  .feh-sep { opacity: 0.35; margin: 0 6px; }
+  /* Segment wrapper. display:contents makes it vanish from layout on desktop — its spans act as
+     direct flex children, so the dotted single-line pill is byte-identical to before. On mobile
+     it becomes a real centred row (coarse rule below). */
+  .feh-seg { display: contents; }
   @media (pointer: coarse) {
-    #focus-escape-hint { backdrop-filter: none; -webkit-backdrop-filter: none; }
+    /* Narrow phones: a multi-segment hint — e.g. CRT's "◀ ▶ change channel · tap away to close
+       · ↻ reload if it won't play" — overflows on one nowrap line. Wrap whole segments, centred:
+       the two short segments sit on the first row and the longer one centres on a row below
+       (2-on-top, 1-underneath). Separators are hidden; each segment stays intact as one unit. */
+    #focus-escape-hint {
+      backdrop-filter: none; -webkit-backdrop-filter: none;
+      max-width: calc(100vw - 16px);
+      flex-wrap: wrap; justify-content: center; align-items: center;
+      white-space: normal; gap: 4px 14px;
+    }
+    #focus-escape-hint .feh-seg { display: flex; align-items: center; justify-content: center; gap: 5px; }
+    #focus-escape-hint .feh-sep { display: none; }
   }
 
   /* Crate record cycling hint (desktop keyboard only) */

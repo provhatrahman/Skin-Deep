@@ -775,7 +775,10 @@ function _tickMpcFocus(dt) {
 // ── CONTROL HINTS ────────────────────────────────────────────────────────────
 // Mirrors core's focus-escape-hint behaviour (show → auto-dim) but with MPC-specific
 // copy so the visitor always knows what to press at each stage.
-const _MPC_HINT_SEP = `<span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`;
+const _MPC_HINT_SEP = `<span class="feh-label feh-sep">&middot;</span>`;
+// Wrap a hint chunk so mobile can stack whole segments as centred rows (desktop keeps them inline,
+// dot-separated — .feh-seg is display:contents there). Mirrors the CRT hint structure.
+const _mpcSeg = inner => `<span class="feh-seg">${inner}</span>`;
 
 function _setMpcHint(html, dimAfter) {
   if (!_elMpcHint) return;
@@ -835,14 +838,16 @@ function _showMpcFocusHint() {
   _showMpcPadGuide();
   if (isMobile) {
     _setMpcHint(
-      `<span class="feh-label">tap a pad to play its clip</span>${_MPC_HINT_SEP}<span class="feh-label">tap outside to return</span>`,
+      _mpcSeg(`<span class="feh-label">tap a pad to play its clip</span>`) + _MPC_HINT_SEP +
+      _mpcSeg(`<span class="feh-label">tap outside to return</span>`),
       9000);
   } else {
     _setMpcHint(
-      `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span>` +
-      `<span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">move between pads</span>` +
-      `${_MPC_HINT_SEP}<span class="feh-key">spc</span><span class="feh-label">play its clip</span>` +
-      `${_MPC_HINT_SEP}<span class="feh-key">esc</span><span class="feh-label">back</span>`,
+      _mpcSeg(
+        `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span>` +
+        `<span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">move between pads</span>`) +
+      `${_MPC_HINT_SEP}` + _mpcSeg(`<span class="feh-key">spc</span><span class="feh-label">play its clip</span>`) +
+      `${_MPC_HINT_SEP}` + _mpcSeg(`<span class="feh-key">esc</span><span class="feh-label">back</span>`),
       9000);
   }
 }
@@ -851,10 +856,10 @@ function _showMpcFocusHint() {
 // transient "try again later" error on a clip, and a tap on ↻ re-kicks it. Named here so the glyph
 // isn't a mystery — this hint shows exactly when the visitor might hit that error.
 function _showMpcEmbedHint() {
-  const reload = `${_MPC_HINT_SEP}<span class="feh-label">&#8635;&#xFE0E; reload if it won&rsquo;t play</span>`;
+  const reload = _MPC_HINT_SEP + _mpcSeg(`<span class="feh-label">&#8635;&#xFE0E; reload if it won&rsquo;t play</span>`);
   _setMpcHint((isMobile
-    ? `<span class="feh-label">tap outside the video to close</span>`
-    : `<span class="feh-key">esc</span><span class="feh-label">close video</span>`) + reload,
+    ? _mpcSeg(`<span class="feh-label">tap outside to close</span>`)
+    : _mpcSeg(`<span class="feh-key">esc</span><span class="feh-label">close video</span>`)) + reload,
     4200);
 }
 

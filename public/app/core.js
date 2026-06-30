@@ -2159,16 +2159,19 @@ function _showFocusEscapeHint() {
 
 function _showExhibitFocusHints() {
   _hideExhibitGuide();   // focused on one photo now — the orbit guidance no longer applies
-  const sep = `<span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`;
+  // Each chunk is wrapped in .feh-seg so mobile stacks whole segments as centred rows (desktop keeps
+  // them inline, dot-separated — .feh-seg is display:contents there).
+  const seg = inner => `<span class="feh-seg">${inner}</span>`;
+  const sep = `<span class="feh-label feh-sep">&middot;</span>`;
   if (isMobile) {
     _elFocusEscapeHint.innerHTML = exhibitPanelN >= 2
-      ? `<span class="feh-label">tap sides to browse</span>${sep}<span class="feh-label">tap to return</span>`
-      : `<span class="feh-label">tap to return</span>`;
+      ? seg(`<span class="feh-label">tap sides to browse</span>`) + sep + seg(`<span class="feh-label">tap to return</span>`)
+      : seg(`<span class="feh-label">tap to return</span>`);
   } else {
     const browse = exhibitPanelN >= 2
-      ? `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span></span><span class="feh-label">browse</span>${sep}`
+      ? seg(`<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span></span><span class="feh-label">browse</span>`) + sep
       : '';
-    _elFocusEscapeHint.innerHTML = browse + `<span class="feh-key">esc</span><span class="feh-label">back</span>`;
+    _elFocusEscapeHint.innerHTML = browse + seg(`<span class="feh-key">esc</span><span class="feh-label">back</span>`);
   }
   _elFocusEscapeHint.classList.remove('dim');
   _elFocusEscapeHint.classList.add('visible');
