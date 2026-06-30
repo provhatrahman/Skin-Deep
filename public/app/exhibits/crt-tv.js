@@ -1307,6 +1307,13 @@ function _resetCrtWatch() {
 const _elCrtHint = document.getElementById('focus-escape-hint');
 let _crtHintTimer = null;
 
+// Dismissable guidance card — fuller "what is this / how to use it" copy shown ALONGSIDE the
+// watch-mode button pill, until the visitor closes it (one-time per session).
+const _elCrtGuide      = document.getElementById('crt-guide');
+const _elCrtGuideBody  = document.getElementById('crt-guide-body');
+const _elCrtGuideClose = document.getElementById('crt-guide-close');
+let _crtGuideDismissed = false;
+
 function _setCrtHint(html, dimAfter) {
   if (!_elCrtHint) return;
   _elCrtHint.innerHTML = html;
@@ -1319,12 +1326,41 @@ function _setCrtHint(html, dimAfter) {
 function _hideCrtHint() {
   clearTimeout(_crtHintTimer);
   if (_elCrtHint) _elCrtHint.classList.remove('visible', 'dim');
+  _hideCrtGuide();   // the guide card is part of the same guidance — tear it down together
 }
+
+function _showCrtGuide() {
+  if (!_elCrtGuide || _crtGuideDismissed) return;
+  const multi = CRT_VIDEOS.length > 1;
+  if (_elCrtGuideBody) {
+    if (isMobile) {
+      _elCrtGuideBody.innerHTML = multi
+        ? `This television plays a handful of channels. <b>Tap &#9664;&#xFE0E; &#9654;&#xFE0E;</b> (or the dials beside the screen) to change channel, and <b>tap away</b> to switch it off.`
+        : `<b>Tap away</b> from the screen to switch the television off.`;
+    } else {
+      _elCrtGuideBody.innerHTML = multi
+        ? `This television plays a handful of channels. Use the <span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span> arrow keys (or the dials beside the screen) to change channel, and <span class="feh-key">esc</span> to switch it off.`
+        : `Press <span class="feh-key">esc</span> to switch the television off.`;
+    }
+  }
+  _elCrtGuide.classList.add('visible');
+}
+
+function _hideCrtGuide() {
+  if (_elCrtGuide) _elCrtGuide.classList.remove('visible');
+}
+
+// Closing the card dismisses it for the session; the button pill stays put.
+if (_elCrtGuideClose) _elCrtGuideClose.addEventListener('click', () => {
+  _crtGuideDismissed = true;
+  _hideCrtGuide();
+});
 
 // Unit open, not yet watching — how to bring the video up. The "ready" halo around the screen is
 // the affordance, so this discovery prompt stays put (no auto-dim) until the visitor watches or
 // walks away — otherwise it fades after a few seconds and the feature is undiscoverable.
 function _showCrtOpenHint() {
+  _hideCrtGuide();   // back at the cabinet — the watch-mode guidance isn't relevant here
   _setCrtHint(isMobile
     ? `<span class="feh-label">tap to watch</span>`
     : `<span class="feh-key">spc</span><span class="feh-label">watch</span>`,
@@ -1337,13 +1373,14 @@ function _showCrtWatchHint() {
   const sep = `<span class="feh-label" style="opacity:0.35;margin:0 6px">&middot;</span>`;
   const ch = CRT_VIDEOS.length > 1
     ? (isMobile
-        ? `<span class="feh-label">&#9664; &#9654; change channel</span>${sep}`
+        ? `<span class="feh-label">&#9664;&#xFE0E; &#9654;&#xFE0E; change channel</span>${sep}`
         : `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span></span><span class="feh-label">channel</span>${sep}`)
     : '';
   _setCrtHint(isMobile
     ? ch + `<span class="feh-label">tap away to close</span>`
     : ch + `<span class="feh-key">esc</span><span class="feh-label">close</span>`,
     CRT_VIDEOS.length > 1 ? 11000 : 9000);
+  _showCrtGuide();   // fuller dismissable guidance alongside the button pill
 }
 
 // Mobile: a tap on the CANVAS while watching either changes channel (if it lands on a visible dial)

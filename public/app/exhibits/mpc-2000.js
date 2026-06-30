@@ -187,6 +187,14 @@ let _mpcLoadTimer = null;   // safety fallback: reveal the player even if iframe
 const _elMpcHint = document.getElementById('focus-escape-hint');
 let _mpcHintTimer = null;
 
+// Dismissable pad-grid guidance card — richer "what is this / how to use it" copy that
+// appears the first time the grid focuses and stays until the visitor closes it. Once
+// dismissed (this session) the terse focus pill takes over instead.
+const _elMpcGuide      = document.getElementById('mpc-pad-guide');
+const _elMpcGuideBody  = document.getElementById('mpc-pad-guide-body');
+const _elMpcGuideClose = document.getElementById('mpc-pad-guide-close');
+let _mpcGuideDismissed = false;
+
 // Mobile tap → pad raycast (desktop uses the arrow-key cursor instead).
 const _padRay = new THREE.Raycaster();
 const _padNdc = new THREE.Vector2();
@@ -779,7 +787,36 @@ function _setMpcHint(html, dimAfter) {
 function _hideMpcHint() {
   clearTimeout(_mpcHintTimer);
   if (_elMpcHint) _elMpcHint.classList.remove('visible', 'dim');
+  _hideMpcPadGuide();   // the guide card is part of the same focus guidance — tear it down together
 }
+
+// Dismissable guidance card: fuller explanation of the pad grid, shown the first time it
+// focuses. Returns true if it actually displayed (so the focus pill can stand down).
+function _showMpcPadGuide() {
+  if (!_elMpcGuide || _mpcGuideDismissed) return false;
+  if (_elMpcGuideBody) {
+    _elMpcGuideBody.innerHTML = isMobile
+      ? `Each of these 16 pads triggers a clip. <b>Tap a pad</b> to play it, and <b>tap outside</b> the grid to step back.`
+      : `Each of these 16 pads triggers a clip. Use the ` +
+        `<span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span>` +
+        `<span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span> arrow keys to move between pads, ` +
+        `press <span class="feh-key">spc</span> to play the selected one, and ` +
+        `<span class="feh-key">esc</span> to step back.`;
+  }
+  _elMpcGuide.classList.add('visible');
+  return true;
+}
+
+function _hideMpcPadGuide() {
+  if (_elMpcGuide) _elMpcGuide.classList.remove('visible');
+}
+
+// Closing the card dismisses it for the session; the button pill at the bottom stays put,
+// so the controls remain reachable at a glance.
+if (_elMpcGuideClose) _elMpcGuideClose.addEventListener('click', () => {
+  _mpcGuideDismissed = true;
+  _hideMpcPadGuide();
+});
 
 // Unit open, not yet focused — how to bring the pad grid forward.
 function _showMpcOpenHint() {
@@ -789,17 +826,20 @@ function _showMpcOpenHint() {
     8500);
 }
 
-// Pad grid focused — how to move the cursor, play a pad, and step back.
+// Pad grid focused — guide the visitor: each pad holds a clip, here's how to move
+// across the grid, trigger one for its media, and step back. The fuller dismissable card
+// shows ALONGSIDE this terse button pill (until the visitor closes the card).
 function _showMpcFocusHint() {
+  _showMpcPadGuide();
   if (isMobile) {
     _setMpcHint(
-      `<span class="feh-label">tap a pad to play</span>${_MPC_HINT_SEP}<span class="feh-label">tap outside to return</span>`,
+      `<span class="feh-label">tap a pad to play its clip</span>${_MPC_HINT_SEP}<span class="feh-label">tap outside to return</span>`,
       9000);
   } else {
     _setMpcHint(
       `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span>` +
-      `<span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">select</span>` +
-      `${_MPC_HINT_SEP}<span class="feh-key">spc</span><span class="feh-label">play</span>` +
+      `<span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span></span><span class="feh-label">move between pads</span>` +
+      `${_MPC_HINT_SEP}<span class="feh-key">spc</span><span class="feh-label">play its clip</span>` +
       `${_MPC_HINT_SEP}<span class="feh-key">esc</span><span class="feh-label">back</span>`,
       9000);
   }
@@ -865,6 +905,7 @@ function _showMpcEmbed(idx) {
   }
 
   _elMpcYt.classList.add('visible');
+  _hideMpcPadGuide();   // the clip takes over — the grid guidance isn't relevant while it plays
   mpcEmbedOn = true;
   _showMpcEmbedHint();
 }

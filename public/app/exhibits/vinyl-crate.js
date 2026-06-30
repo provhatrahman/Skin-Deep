@@ -14,7 +14,7 @@ const {
   initTex: _initTex, scheduleIdle: _scheduleIdle, texLoader: _texLoader,
   setFloaterVisible: _setFloaterVisible, restoreFloater: _restoreExhibitFloater,
   disposeObject3D: _disposeCrateObject, setTriggerFloater, beginExhibitDPR, endExhibitDPR,
-  setCD, getCD, hidePrompt,
+  setCD, getCD, hidePrompt, renderFocusPrompt,
   computeFocusTarget: _computeExhibitFocusTarget, syncCamera: _syncCamera,
   showFocusEscapeHint: _showFocusEscapeHint, hideFocusEscapeHint: _hideFocusEscapeHint,
   elAimReticle: _elAimReticle, elPrompt: _elPrompt, elIprLabel: _elIprLabel, elIprIcon: _elIprIcon,
@@ -69,6 +69,12 @@ const _elCrateNext = document.getElementById('crate-next-btn');
 const _elCrateBrowseHint = document.getElementById('crate-browse-hint');
 let _crateBrowseHintTimer = null;
 let _crateNavPulseTimer = null;
+// Dismissable guidance card — fuller "what is this / how to use it" copy shown ALONGSIDE the
+// browse button pill, until the visitor closes it (one-time per session).
+const _elCrateGuide      = document.getElementById('crate-guide');
+const _elCrateGuideBody  = document.getElementById('crate-guide-body');
+const _elCrateGuideClose = document.getElementById('crate-guide-close');
+let _crateGuideDismissed = false;
 const _elCrateSc = document.getElementById('crate-sc-embed');
 const _elCrateScIframe = document.getElementById('crate-sc-iframe');
 const _elCrateScCredit = document.getElementById('crate-sc-credit');
@@ -1232,13 +1238,45 @@ function _showCrateNav(pulse) {
 function _hideCrateBrowseHint() {
   clearTimeout(_crateBrowseHintTimer);
   _elCrateBrowseHint?.classList.remove('visible', 'dim');
+  _hideCrateGuide();   // the guide card is part of the same guidance — tear it down together
 }
+
+// Dismissable guidance card explaining the crate: flip through the records, then play one.
+function _showCrateGuide() {
+  if (!_elCrateGuide || _crateGuideDismissed) return;
+  const multi = VINYL.records.length > 1;
+  if (_elCrateGuideBody) {
+    if (isMobile) {
+      _elCrateGuideBody.innerHTML = multi
+        ? `A crate of records. <b>Tap the arrows</b> to flip through it, then <b>tap a record</b> to hear it. Tap away to close.`
+        : `A crate of records. <b>Tap the record</b> to hear it, or tap away to close.`;
+    } else {
+      _elCrateGuideBody.innerHTML = (multi
+        ? `A crate of records. Use the <span class="feh-key">&uarr;</span><span class="feh-key">&darr;</span> arrow keys to flip through it, then `
+        : `A crate of records. `) +
+        `<b>click a record</b> (or press <span class="feh-key">spc</span>) to hear it, and <span class="feh-key">esc</span> to close.`;
+    }
+  }
+  _elCrateGuide.classList.add('visible');
+}
+
+function _hideCrateGuide() {
+  if (_elCrateGuide) _elCrateGuide.classList.remove('visible');
+}
+
+// Closing the card dismisses it for the session; the button pill stays put.
+if (_elCrateGuideClose) _elCrateGuideClose.addEventListener('click', () => {
+  _crateGuideDismissed = true;
+  _hideCrateGuide();
+});
 
 function _showCrateBrowseHint() {
   if (!_elCrateBrowseHint || cratePhase !== 'browsing' || crateFocusPhase) return;
+  _showCrateGuide();   // fuller dismissable guidance alongside the button pill
   const multi = VINYL.records.length > 1;
   if (isMobile) {
-    if (!multi) { _hideCrateBrowseHint(); return; }
+    // Single record — nothing to browse, so drop the pill but keep the guide (tap-to-play still applies).
+    if (!multi) { clearTimeout(_crateBrowseHintTimer); _elCrateBrowseHint.classList.remove('visible', 'dim'); return; }
     _elCrateBrowseHint.innerHTML =
       `<span class="cbh-keys"><span class="feh-key">&lsaquo;</span><span class="feh-key">&rsaquo;</span></span>` +
       `<span class="feh-label">tap arrows to browse records</span>`;
@@ -1319,9 +1357,13 @@ registerExhibit({
         const ry = (-_panelWp.y * 0.5 + 0.5) * window.innerHeight;
         _elPrompt.style.left = rx + 'px';
         _elPrompt.style.top  = (ry - 36) + 'px';
-        _elIprLabel.textContent = isMobile ? 'tap to focus' : 'focus';
-        _elIprIcon.innerHTML = isMobile ? `<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,210,120,0.95)" stroke-width="1.5" width="28" height="28"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="rgba(255,180,60,0.35)"/></svg>` : `<span style="font-family:Georgia,serif;font-size:15px;letter-spacing:0.05em;color:rgba(255,220,140,0.95)">spc</span>`;
-        _elPrompt.classList.add('visible');
+        // Shared focus prompt (matches the photo carousel): desktop "click to focus / or press
+        // space" + click glyph, mobile tap circle. Set once on the show transition; clicking the
+        // aimed disc focuses it just like Space (core's click handler fires KeyE while it's up).
+        if (!_elPrompt.classList.contains('visible')) {
+          renderFocusPrompt();
+          _elPrompt.classList.add('visible');
+        }
       } else {
         _elPrompt.classList.remove('visible');
       }
