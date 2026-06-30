@@ -1100,6 +1100,7 @@ const _elCrtYtPoster = document.getElementById('crt-yt-poster');   // channel th
 const _elCrtYtClose  = document.getElementById('crt-yt-close');
 const _elCrtChPrev   = document.getElementById('crt-ch-prev');
 const _elCrtChNext   = document.getElementById('crt-ch-next');
+const _elCrtChReload = document.getElementById('crt-ch-reload');
 const _elCrtChLabel  = document.getElementById('crt-ch-label');
 const _elCrtKnobPrev = document.getElementById('crt-knob-prev');    // desktop channel dials flanking the screen
 const _elCrtKnobNext = document.getElementById('crt-knob-next');
@@ -1183,6 +1184,21 @@ function _loadCrtYt(url) {
   clearTimeout(_crtLoadTimer);
   _crtLoadTimer = setTimeout(() => _elCrtYtFrame?.classList.add('loaded'), 4000);
   _elCrtYtIframe.src = url;
+}
+
+// Re-kick the current channel — for when YouTube throws its transient, server-side "An error
+// occurred, please try again later" playback error. That error can't be caught in the cross-origin
+// iframe (onload fires fine, the error shows inside YouTube's own player), so the visitor taps ↻ to
+// force a fresh load; the reload rides their gesture so autoplay still works. Blanking src first is
+// what guarantees the reload — re-setting the SAME url short-circuits _loadCrtYt's same-clip guard.
+function _reloadCrtChannel() {
+  if (!crtWatching || !_elCrtYtIframe) return;
+  const url = CRT_VIDEOS[_crtVidIdx];
+  if (!url) return;
+  _resetCrtFacade(_crtVidIdx);   // poster + spinner back over the reload
+  _flashCrtChannel();
+  _elCrtYtIframe.src = '';        // force a reload even though the channel hasn't changed
+  _loadCrtYt(url);
 }
 
 function _showCrtYt() {
@@ -1333,14 +1349,18 @@ function _showCrtGuide() {
   if (!_elCrtGuide || _crtGuideDismissed) return;
   const multi = CRT_VIDEOS.length > 1;
   if (_elCrtGuideBody) {
+    // The closing note about ↻ explains the reload button: YouTube sometimes refuses a clip with a
+    // transient "try again later" error — tapping ↻ re-kicks that channel. Always appended so the
+    // glyph in the channel bar isn't unexplained.
+    const reload = ` If a channel shows an error or won&rsquo;t play, tap <b>&#8635;&#xFE0E;</b> to reload it.`;
     if (isMobile) {
-      _elCrtGuideBody.innerHTML = multi
+      _elCrtGuideBody.innerHTML = (multi
         ? `This television plays a handful of channels. <b>Tap &#9664;&#xFE0E; &#9654;&#xFE0E;</b> (or the dials beside the screen) to change channel, and <b>tap away</b> to switch it off.`
-        : `<b>Tap away</b> from the screen to switch the television off.`;
+        : `<b>Tap away</b> from the screen to switch the television off.`) + reload;
     } else {
-      _elCrtGuideBody.innerHTML = multi
+      _elCrtGuideBody.innerHTML = (multi
         ? `This television plays a handful of channels. Use the <span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span> arrow keys (or the dials beside the screen) to change channel, and <span class="feh-key">esc</span> to switch it off.`
-        : `Press <span class="feh-key">esc</span> to switch the television off.`;
+        : `Press <span class="feh-key">esc</span> to switch the television off.`) + reload;
     }
   }
   _elCrtGuide.classList.add('visible');
@@ -1376,9 +1396,12 @@ function _showCrtWatchHint() {
         ? `<span class="feh-label">&#9664;&#xFE0E; &#9654;&#xFE0E; change channel</span>${sep}`
         : `<span style="display:inline-flex;gap:4px"><span class="feh-key">&larr;</span><span class="feh-key">&rarr;</span></span><span class="feh-label">channel</span>${sep}`)
     : '';
+  // ↻ surfaces the reload button (#crt-ch-reload): YouTube occasionally throws a transient "try
+  // again later" error on a clip — a tap on ↻ re-kicks it. Worth naming here so the glyph isn't a mystery.
+  const reload = `${sep}<span class="feh-label">&#8635;&#xFE0E; reload if it won&rsquo;t play</span>`;
   _setCrtHint(isMobile
-    ? ch + `<span class="feh-label">tap away to close</span>`
-    : ch + `<span class="feh-key">esc</span><span class="feh-label">close</span>`,
+    ? ch + `<span class="feh-label">tap away to close</span>` + reload
+    : ch + `<span class="feh-key">esc</span><span class="feh-label">close</span>` + reload,
     CRT_VIDEOS.length > 1 ? 11000 : 9000);
   _showCrtGuide();   // fuller dismissable guidance alongside the button pill
 }
@@ -1428,6 +1451,7 @@ function _wireCrtBtn(el, fn) {
 }
 _wireCrtBtn(_elCrtChPrev, () => _changeCrtChannel(-1));
 _wireCrtBtn(_elCrtChNext, () => _changeCrtChannel(1));
+_wireCrtBtn(_elCrtChReload, () => _reloadCrtChannel());
 _wireCrtBtn(_elCrtKnobPrev, () => _changeCrtChannel(-1));   // desktop side dials
 _wireCrtBtn(_elCrtKnobNext, () => _changeCrtChannel(1));
 _wireCrtBtn(_elCrtYtClose, () => _closeCrtWatch());

@@ -180,7 +180,9 @@ const _elMpcYtFrame  = document.getElementById('mpc-yt-frame');    // gets .load
 const _elMpcYtIframe = document.getElementById('mpc-yt-iframe');
 const _elMpcYtPoster = document.getElementById('mpc-yt-poster');   // thumbnail shown while the player loads
 const _elMpcYtClose  = document.getElementById('mpc-yt-close');
+const _elMpcYtReload = document.getElementById('mpc-yt-reload');   // ↻ re-kicks the current clip
 let _mpcLoadTimer = null;   // safety fallback: reveal the player even if iframe.onload never fires
+let _mpcEmbedIdx = -1;      // pad idx of the clip currently up (so ↻ knows what to reload)
 
 // Control hints reuse the shared focus-escape-hint banner (only one exhibit is open at a
 // time, so owning its contents here is safe). The MPC drives it with its own copy.
@@ -845,11 +847,14 @@ function _showMpcFocusHint() {
   }
 }
 
-// Clip overlay up — how to dismiss it.
+// Clip overlay up — how to dismiss it, plus the ↻ reload (top-left): YouTube occasionally throws a
+// transient "try again later" error on a clip, and a tap on ↻ re-kicks it. Named here so the glyph
+// isn't a mystery — this hint shows exactly when the visitor might hit that error.
 function _showMpcEmbedHint() {
-  _setMpcHint(isMobile
+  const reload = `${_MPC_HINT_SEP}<span class="feh-label">&#8635;&#xFE0E; reload if it won&rsquo;t play</span>`;
+  _setMpcHint((isMobile
     ? `<span class="feh-label">tap outside the video to close</span>`
-    : `<span class="feh-key">esc</span><span class="feh-label">close video</span>`,
+    : `<span class="feh-key">esc</span><span class="feh-label">close video</span>`) + reload,
     4200);
 }
 
@@ -907,7 +912,19 @@ function _showMpcEmbed(idx) {
   _elMpcYt.classList.add('visible');
   _hideMpcPadGuide();   // the clip takes over — the grid guidance isn't relevant while it plays
   mpcEmbedOn = true;
+  _mpcEmbedIdx = idx;
   _showMpcEmbedHint();
+}
+
+// Re-kick the clip that's currently up — for when YouTube throws its transient, server-side "An
+// error occurred, please try again later" playback error. That error can't be caught in the
+// cross-origin iframe (onload fires fine; the error shows inside YouTube's own player), so the
+// visitor taps ↻ to force a fresh load; it rides their gesture so autoplay still works. Blanking
+// src first guarantees the reload — _showMpcEmbed otherwise short-circuits when the url is unchanged.
+function _reloadMpcEmbed() {
+  if (!mpcEmbedOn || _mpcEmbedIdx < 0 || !_elMpcYtIframe) return;
+  _elMpcYtIframe.src = '';
+  _showMpcEmbed(_mpcEmbedIdx);
 }
 
 // Tear the overlay down and stop playback (clearing src halts the video), and reset the
@@ -919,6 +936,7 @@ function _hideMpcEmbed() {
   if (_elMpcYtIframe) { _elMpcYtIframe.onload = null; _elMpcYtIframe.src = ''; }
   if (_elMpcYtFrame)  _elMpcYtFrame.classList.remove('loaded');
   if (_elMpcYtPoster) _elMpcYtPoster.style.backgroundImage = 'none';
+  _mpcEmbedIdx = -1;
   mpcEmbedOn = false;
   if (mpcFocusPhase === 'focused') _showMpcFocusHint();
 }
@@ -963,6 +981,11 @@ if (_elMpcYtClose) {
   const _close = e => { e.preventDefault(); e.stopPropagation(); _hideMpcEmbed(); };
   _elMpcYtClose.addEventListener('click', _close);
   _elMpcYtClose.addEventListener('touchstart', _close, { passive: false });
+}
+if (_elMpcYtReload) {
+  const _reload = e => { e.preventDefault(); e.stopPropagation(); _reloadMpcEmbed(); };
+  _elMpcYtReload.addEventListener('click', _reload);
+  _elMpcYtReload.addEventListener('touchstart', _reload, { passive: false });
 }
 
 // Keyboard Escape can't reach us while the clip iframe holds focus: it's cross-origin, so
