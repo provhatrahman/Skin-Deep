@@ -279,6 +279,17 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.6);
   }
   #mpc-yt-close:hover { background: rgba(28,22,16,0.95); }
+  /* Reload affordance — mirror of the close button on the opposite corner. */
+  #mpc-yt-reload {
+    position: absolute; top: -14px; left: -14px; z-index: 1;
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.25); background: rgba(8,6,4,0.92); color: #f0e9da;
+    font: 400 17px/1 Arial, sans-serif; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+    font-variant-emoji: text;
+  }
+  #mpc-yt-reload:hover { background: rgba(28,22,16,0.95); }
 
   /* Dismissable exhibit guidance card (top-centre, clear of the focused content). Shared by
      the MPC pads, the CRT screen, and the vinyl crate; each shows ALONGSIDE its button pill. */
@@ -905,6 +916,9 @@
 </div>
 <div id="mpc-yt-embed">
   <button id="mpc-yt-close" aria-label="close">&times;</button>
+  <!-- ↻ re-kicks the current clip when YouTube throws its transient "try again later" playback
+       error (server-side; can't be caught in the cross-origin frame). Mirrors the close button. -->
+  <button id="mpc-yt-reload" aria-label="reload" title="Reload (if the video won't play)">&#8635;&#xFE0E;</button>
   <div id="mpc-yt-frame">
     <iframe id="mpc-yt-iframe" scrolling="no" frameborder="no" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>
     <div id="mpc-yt-poster"></div>
@@ -957,6 +971,10 @@
     <button id="crt-ch-prev" aria-label="previous channel">&#9664;&#xFE0E;</button>
     <span id="crt-ch-label">CH 01 / 09</span>
     <button id="crt-ch-next" aria-label="next channel">&#9654;&#xFE0E;</button>
+    <!-- ↻ re-kicks the current channel when YouTube throws its transient "try again later"
+         playback error (server-side; can't be caught in the cross-origin frame). VS-15 keeps
+         the glyph flat, never an iOS colour emoji — same reason as the ◀/▶ above. -->
+    <button id="crt-ch-reload" aria-label="reload channel" title="Reload (if the video won't play)">&#8635;&#xFE0E;</button>
   </div>
 </div>
 <button id="crate-prev-btn" class="exhibit-nav-btn" aria-label="previous record">
